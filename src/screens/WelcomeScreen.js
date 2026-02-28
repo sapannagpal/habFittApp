@@ -50,7 +50,7 @@ const PAIN_POINTS = [
     id: '3',
     icon: '🔥',
     title: 'Always Running on Empty',
-    body: 'No energy left for yourself after everything else. You've put yourself last.',
+    body: "No energy left for yourself after everything else. You've put yourself last.",
   },
 ];
 
@@ -78,7 +78,7 @@ const ANTI = [
 const TESTIMONIALS = [
   {
     id: '1',
-    quote: '"Meaningful shifts in my health and energy within the first week. I didn\'t expect it to happen so fast."',
+    quote: '"Meaningful shifts in my health and energy within the first week. I didn\u2019t expect it to happen so fast."',
     name: 'Sarah, 34',
     role: 'Marketing Manager',
   },
