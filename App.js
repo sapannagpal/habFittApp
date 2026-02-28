@@ -4,7 +4,7 @@
  * Navigation strategy:
  *  - While auth state is bootstrapping → show full-screen loader
  *  - isAuthenticated = true  → AppStack (Dashboard, ...)
- *  - isAuthenticated = false → AuthStack (Login, Register, VerifyEmail)
+ *  - isAuthenticated = false → AuthStack (Welcome, Login, Register, VerifyEmail)
  *
  * Stack switching is driven by AuthContext; no manual navigation.navigate
  * calls are needed for auth transitions.
@@ -15,6 +15,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { ActivityIndicator, View, StyleSheet } from 'react-native';
 
 import { AuthProvider, useAuth } from './src/context/AuthContext';
+import WelcomeScreen from './src/screens/WelcomeScreen';
 import LoginScreen from './src/screens/LoginScreen';
 import RegisterScreen from './src/screens/RegisterScreen';
 import DashboardScreen from './src/screens/DashboardScreen';
@@ -23,7 +24,7 @@ import VerifyEmailScreen from './src/screens/VerifyEmailScreen';
 const Stack = createNativeStackNavigator();
 
 const HEADER_STYLE = {
-  headerStyle: { backgroundColor: '#4A90E2' },
+  headerStyle: { backgroundColor: '#141414' },
   headerTintColor: '#fff',
   headerTitleStyle: { fontWeight: '700' },
 };
@@ -31,6 +32,11 @@ const HEADER_STYLE = {
 function AuthStack() {
   return (
     <Stack.Navigator screenOptions={HEADER_STYLE}>
+      <Stack.Screen
+        name="Welcome"
+        component={WelcomeScreen}
+        options={{ headerShown: false }}
+      />
       <Stack.Screen
         name="Login"
         component={LoginScreen}
@@ -68,7 +74,7 @@ function AppNavigator() {
   if (isLoading) {
     return (
       <View style={styles.loader}>
-        <ActivityIndicator size="large" color="#4A90E2" />
+        <ActivityIndicator size="large" color="#FF6B00" />
       </View>
     );
   }
@@ -93,6 +99,6 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#f5f5f5',
+    backgroundColor: '#141414',
   },
 });
