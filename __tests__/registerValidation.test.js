@@ -7,7 +7,7 @@
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const COUNTRY_CODE_REGEX = /^\+\d{1,4}$/;
-const PASSWORD_CHARSET = /^[a-zA-Z0-9@_\-!#$%&*.?,]+$/;
+const PASSWORD_CHARSET = /^[a-zA-Z0-9@_\-!#$%&*.?,+=^~()]+$/;
 
 function parseDDMMYYYY(str) {
   if (!str || str.length !== 10) return null;
@@ -69,81 +69,138 @@ const validForm = {
   privacyAccepted: true,
 };
 
+// ─── Country code tests ───────────────────────────────────────────────────────
+
 describe('Country code validation', () => {
-  it('accepts +91 (India)', () => { expect(COUNTRY_CODE_REGEX.test('+91')).toBe(true); });
-  it('accepts +1 (USA)', () => { expect(COUNTRY_CODE_REGEX.test('+1')).toBe(true); });
-  it('accepts +44 (UK)', () => { expect(COUNTRY_CODE_REGEX.test('+44')).toBe(true); });
-  it('accepts +9999 (max 4 digits)', () => { expect(COUNTRY_CODE_REGEX.test('+9999')).toBe(true); });
-  it('rejects empty string', () => { expect(COUNTRY_CODE_REGEX.test('')).toBe(false); });
-  it('rejects missing + prefix', () => { expect(COUNTRY_CODE_REGEX.test('91')).toBe(false); });
-  it('rejects + with no digits', () => { expect(COUNTRY_CODE_REGEX.test('+')).toBe(false); });
-  it('rejects +99999 (5 digits — too long)', () => { expect(COUNTRY_CODE_REGEX.test('+99999')).toBe(false); });
+  it('accepts +91 (India)', () => {
+    expect(COUNTRY_CODE_REGEX.test('+91')).toBe(true);
+  });
+
+  it('accepts +1 (USA)', () => {
+    expect(COUNTRY_CODE_REGEX.test('+1')).toBe(true);
+  });
+
+  it('accepts +44 (UK)', () => {
+    expect(COUNTRY_CODE_REGEX.test('+44')).toBe(true);
+  });
+
+  it('accepts +9999 (max 4 digits)', () => {
+    expect(COUNTRY_CODE_REGEX.test('+9999')).toBe(true);
+  });
+
+  it('rejects empty string', () => {
+    expect(COUNTRY_CODE_REGEX.test('')).toBe(false);
+  });
+
+  it('rejects missing + prefix', () => {
+    expect(COUNTRY_CODE_REGEX.test('91')).toBe(false);
+  });
+
+  it('rejects + with no digits', () => {
+    expect(COUNTRY_CODE_REGEX.test('+')).toBe(false);
+  });
+
+  it('rejects +99999 (5 digits — too long)', () => {
+    expect(COUNTRY_CODE_REGEX.test('+99999')).toBe(false);
+  });
+
   it('triggers error in form validation when country code invalid', () => {
     const errors = validate({ ...validForm, countryCode: '91' });
     expect(errors.countryCode).toBeDefined();
   });
+
   it('no error when country code is valid', () => {
     const errors = validate({ ...validForm, countryCode: '+44' });
     expect(errors.countryCode).toBeUndefined();
   });
 });
 
-describe('Password validation — min 6, charset only', () => {
-  it('accepts exactly 6 characters', () => {
+// ─── Password validation tests ────────────────────────────────────────────────
+
+describe('Password validation — min 6, common special chars only', () => {
+  it('accepts exactly 6 characters (all lowercase)', () => {
+    const errors = validate({ ...validForm, password: 'abcdef', confirmPassword: 'abcdef' });
+    expect(errors.password).toBeUndefined();
+  });
+
+  it('accepts 6-char password with no uppercase or special char', () => {
     const errors = validate({ ...validForm, password: 'abc123', confirmPassword: 'abc123' });
     expect(errors.password).toBeUndefined();
   });
-  it('accepts alphanumeric password', () => {
-    const errors = validate({ ...validForm, password: 'HelloWorld1', confirmPassword: 'HelloWorld1' });
+
+  it('accepts 6-char password that is all uppercase', () => {
+    const errors = validate({ ...validForm, password: 'ABCDEF', confirmPassword: 'ABCDEF' });
     expect(errors.password).toBeUndefined();
   });
-  it('accepts password with allowed special chars', () => {
-    const samples = ['hello@1', 'my_pass', 'p-word!', 'test#1', 'data$ok', 'a&b*c.d'];
+
+  it('accepts password with a common special char', () => {
+    const errors = validate({ ...validForm, password: 'pass@1', confirmPassword: 'pass@1' });
+    expect(errors.password).toBeUndefined();
+  });
+
+  it('accepts password with allowed special chars (@_-!#$%&*.?,+=^~())', () => {
+    const samples = ['abc_de', 'ab-cde', 'ab!cde', 'a+bcde', 'ab=cde', 'a^bcde', 'ab~cd1', 'ab(cde', 'ab)cde'];
     samples.forEach((pw) => {
       const errors = validate({ ...validForm, password: pw, confirmPassword: pw });
       expect(errors.password).toBeUndefined();
     });
   });
+
   it('rejects password shorter than 6 characters', () => {
     const errors = validate({ ...validForm, password: 'ab1', confirmPassword: 'ab1' });
     expect(errors.password).toMatch(/6 characters/);
   });
+
+  it('rejects 5-character password (one below threshold)', () => {
+    const errors = validate({ ...validForm, password: 'abc12', confirmPassword: 'abc12' });
+    expect(errors.password).toBeDefined();
+  });
+
   it('rejects empty password', () => {
     const errors = validate({ ...validForm, password: '', confirmPassword: '' });
     expect(errors.password).toMatch(/required/i);
   });
-  it('rejects password with disallowed chars', () => {
-    const bad = ['pass<1>', 'test {a}', 'hello world'];
+
+  it('rejects password with disallowed chars (<, >, {, }, space)', () => {
+    const bad = ['pass<1>', 'test {a}', 'hello world', 'ab}cde', 'ab[cde'];
     bad.forEach((pw) => {
       const errors = validate({ ...validForm, password: pw, confirmPassword: pw });
       expect(errors.password).toBeDefined();
     });
   });
-  it('5 character password still invalid', () => {
-    const errors = validate({ ...validForm, password: 'abcd1', confirmPassword: 'abcd1' });
-    expect(errors.password).toBeDefined();
-  });
 });
+
+// ─── E.164 phone build ────────────────────────────────────────────────────────
 
 describe('E.164 phone construction', () => {
   it('strips spaces and prepends country code', () => {
-    const e164 = '+91' + '98765 43210'.replace(/\s/g, '');
+    const countryCode = '+91';
+    const phone = '98765 43210';
+    const e164 = countryCode.trim() + phone.replace(/\s/g, '');
     expect(e164).toBe('+919876543210');
   });
+
   it('works with +1 country code', () => {
-    expect('+1' + '4155551234').toBe('+14155551234');
+    const e164 = '+1' + '4155551234';
+    expect(e164).toBe('+14155551234');
   });
 });
 
+// ─── Date parsing ─────────────────────────────────────────────────────────────
+
 describe('Date parsing and backend conversion', () => {
-  it('parses valid DD-MM-YYYY', () => { expect(parseDDMMYYYY('15-01-1990')).toBeTruthy(); });
+  it('parses valid DD-MM-YYYY', () => {
+    expect(parseDDMMYYYY('15-01-1990')).toBeTruthy();
+  });
+
   it('converts DD-MM-YYYY to YYYY-MM-DD for backend', () => {
     expect(toBackendDate('15-01-1990')).toBe('1990-01-15');
   });
+
   it('rejects invalid date string', () => {
-    expect(parseDDMMYYYY('1990-01-15')).toBeNull();
-    expect(parseDDMMYYYY('32-01-2000')).toBeNull();
-    expect(parseDDMMYYYY('15-13-2000')).toBeNull();
+    expect(parseDDMMYYYY('1990-01-15')).toBeNull(); // wrong format order
+    expect(parseDDMMYYYY('32-01-2000')).toBeNull(); // day 32 — always invalid
+    expect(parseDDMMYYYY('15-13-2000')).toBeNull(); // month 13 — always invalid
     expect(parseDDMMYYYY('')).toBeNull();
   });
 });

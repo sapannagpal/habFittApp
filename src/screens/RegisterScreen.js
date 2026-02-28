@@ -72,10 +72,11 @@ export default function RegisterScreen({ navigation }) {
 
   // Country code: must start with +, followed by 1-4 digits
   const handleCountryCodeChange = (text) => {
+    // Always keep leading +; allow digits after it
     let val = text;
     if (!val.startsWith('+')) val = '+' + val.replace(/\D/g, '');
     else val = '+' + val.slice(1).replace(/\D/g, '');
-    if (val.length <= 5) update('countryCode', val);
+    if (val.length <= 5) update('countryCode', val); // +1 to +9999
   };
 
   // Allow only digits and spaces in phone input
@@ -131,13 +132,13 @@ export default function RegisterScreen({ navigation }) {
       errors.dateOfBirth = 'Use DD-MM-YYYY format — e.g. 15-01-1990';
     }
 
-    const PASSWORD_CHARSET = /^[a-zA-Z0-9@_\-!#$%&*.?,]+$/;
+    const PASSWORD_CHARSET = /^[a-zA-Z0-9@_\-!#$%&*.?,+=^~()]+$/;
     if (!form.password) {
       errors.password = 'Password is required';
     } else if (form.password.length < 6) {
       errors.password = 'Password must be at least 6 characters';
     } else if (!PASSWORD_CHARSET.test(form.password)) {
-      errors.password = 'Only letters, digits and common symbols (@_-!#$%&*.?,) are allowed';
+      errors.password = 'Only letters, digits and common symbols (@_-!#$%&*.?,+=^~()) are allowed';
     }
 
     if (!form.confirmPassword) {
@@ -167,7 +168,7 @@ export default function RegisterScreen({ navigation }) {
         phone: phoneE164,
         dateOfBirth: toBackendDate(form.dateOfBirth),
         password: form.password,
-        role: 'CUSTOMER',
+        role: 'PATIENT',
       });
       navigation.navigate('VerifyEmail', {
         email: form.email.trim().toLowerCase(),
