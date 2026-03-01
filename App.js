@@ -4,7 +4,7 @@
  * Navigation strategy:
  *  - While auth state is bootstrapping → show full-screen loader
  *  - isAuthenticated = true  → AppStack (Dashboard, ...)
- *  - isAuthenticated = false → AuthStack (Welcome, Login, Register, VerifyEmail)
+ *  - isAuthenticated = false → AuthStack (Login, Register, VerifyEmail)
  *
  * Stack switching is driven by AuthContext; no manual navigation.navigate
  * calls are needed for auth transitions.
@@ -20,6 +20,10 @@ import LoginScreen from './src/screens/LoginScreen';
 import RegisterScreen from './src/screens/RegisterScreen';
 import DashboardScreen from './src/screens/DashboardScreen';
 import VerifyEmailScreen from './src/screens/VerifyEmailScreen';
+import ForgotPasswordScreen from './src/screens/ForgotPasswordScreen';
+import ResetCodeScreen from './src/screens/ResetCodeScreen';
+import ResetPasswordScreen from './src/screens/ResetPasswordScreen';
+import PasswordResetSuccessScreen from './src/screens/PasswordResetSuccessScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -50,6 +54,26 @@ function AuthStack() {
       <Stack.Screen
         name="VerifyEmail"
         component={VerifyEmailScreen}
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="ForgotPassword"
+        component={ForgotPasswordScreen}
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="ResetCode"
+        component={ResetCodeScreen}
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="ResetPassword"
+        component={ResetPasswordScreen}
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="PasswordResetSuccess"
+        component={PasswordResetSuccessScreen}
         options={{ headerShown: false }}
       />
     </Stack.Navigator>
