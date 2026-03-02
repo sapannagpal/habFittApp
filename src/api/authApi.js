@@ -192,4 +192,23 @@ export const authApi = {
       reset_token: resetToken,
       new_password: newPassword,
     }),
+
+  /**
+   * POST /auth/verify-email
+   * Verify email using the token from the verification email link.
+   * Called if the app handles the token directly (deep-link flow).
+   * @param {string} token — raw base64url token from the email link
+   * @returns {Promise<AxiosResponse<{ message: string, timestamp: string }>>}
+   */
+  verifyEmail: (token) =>
+    apiClient.post('/auth/verify-email', { token }),
+
+  /**
+   * POST /auth/verify-email/resend
+   * Re-send the verification email. Always returns 200 (anti-enumeration).
+   * @param {string} email — the user's registered email address
+   * @returns {Promise<AxiosResponse<{ message: string, timestamp: string }>>}
+   */
+  resendVerificationEmail: (email) =>
+    apiClient.post('/auth/verify-email/resend', { email }),
 };

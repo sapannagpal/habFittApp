@@ -1,26 +1,61 @@
-import React, { createContext, useContext, useEffect, useReducer, useCallback } from 'react';
+/**
+ * AuthContext — global authentication state for the HabFitt app.
+ *
+ * Responsibilities:
+ *  - Bootstrap: reads stored tokens on app startup, sets initial auth state
+ *  - Actions: login(), register(), logout()
+ *  - Error surface: exposes last error message for screens to display
+ *  - Session expiry: registers callback with authApi to receive "session expired" events
+ *
+ * Usage:
+ *   const { isAuthenticated, user, login, logout, isLoading, isBootstrapping, error } = useAuth();
+ */
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useReducer,
+  useCallback,
+} from 'react';
 import { authApi, setAuthExpiredCallback } from '../api/authApi';
 import { tokenStorage } from '../utils/tokenStorage';
 
 const AuthContext = createContext(null);
 
+// ─── State shape ───────────────────────────────────────────────────────────────
 const initialState = {
-  user: null,
+  user: null,              // { id, role, first_name, mfa_enabled } from TokenResponse
   isAuthenticated: false,
-  isLoading: true,
-  error: null,
+  isBootstrapping: true,   // true only during the initial token-read on app startup
+  isLoading: true,         // true while bootstrapping or during API calls
+  error: null,             // last error message string
 };
 
+// ─── Reducer ───────────────────────────────────────────────────────────────────
 function authReducer(state, action) {
   switch (action.type) {
     case 'LOADING':
       return { ...state, isLoading: true, error: null };
     case 'AUTH_SUCCESS':
-      return { ...state, user: action.payload, isAuthenticated: true, isLoading: false, error: null };
+      return {
+        ...state,
+        user: action.payload,
+        isAuthenticated: true,
+        isBootstrapping: false,
+        isLoading: false,
+        error: null,
+      };
     case 'AUTH_LOGOUT':
-      return { ...state, user: null, isAuthenticated: false, isLoading: false, error: null };
+      return {
+        ...state,
+        user: null,
+        isAuthenticated: false,
+        isBootstrapping: false,
+        isLoading: false,
+        error: null,
+      };
     case 'AUTH_ERROR':
-      return { ...state, isLoading: false, error: action.payload };
+      return { ...state, isBootstrapping: false, isLoading: false, error: action.payload };
     case 'CLEAR_ERROR':
       return { ...state, error: null };
     default:
@@ -28,9 +63,11 @@ function authReducer(state, action) {
   }
 }
 
+// ─── Provider ──────────────────────────────────────────────────────────────────
 export function AuthProvider({ children }) {
   const [state, dispatch] = useReducer(authReducer, initialState);
 
+  // Bootstrap: check for existing session on app startup
   useEffect(() => {
     (async () => {
       try {
@@ -46,6 +83,7 @@ export function AuthProvider({ children }) {
     })();
   }, []);
 
+  // Register token-refresh-failure callback so the interceptor can signal logout
   const handleAuthExpired = useCallback(() => {
     dispatch({ type: 'AUTH_LOGOUT' });
   }, []);
@@ -53,6 +91,8 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     setAuthExpiredCallback(handleAuthExpired);
   }, [handleAuthExpired]);
+
+  // ─── Actions ────────────────────────────────────────────────────────────────
 
   const login = useCallback(async (email, password) => {
     dispatch({ type: 'LOADING' });
@@ -71,6 +111,7 @@ export function AuthProvider({ children }) {
     dispatch({ type: 'LOADING' });
     try {
       const { data } = await authApi.register(formData);
+      // Registration does NOT authenticate — account is PENDING_VERIFICATION
       dispatch({ type: 'AUTH_LOGOUT' });
       return data;
     } catch (err) {
@@ -83,7 +124,7 @@ export function AuthProvider({ children }) {
     try {
       await authApi.logout(logoutAllDevices);
     } catch {
-      // Always clear local state
+      // Always clear local state, even if the API call fails
     } finally {
       await tokenStorage.clearTokens();
       dispatch({ type: 'AUTH_LOGOUT' });
@@ -95,21 +136,32 @@ export function AuthProvider({ children }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ ...state, login, register, logout, clearError }}>
+    <AuthContext.Provider
+      value={{ ...state, login, register, logout, clearError }}
+    >
       {children}
     </AuthContext.Provider>
   );
 }
 
+// ─── Hook ──────────────────────────────────────────────────────────────────────
 export function useAuth() {
   const ctx = useContext(AuthContext);
   if (!ctx) throw new Error('useAuth must be used inside <AuthProvider>');
   return ctx;
 }
 
+// ─── Helpers ───────────────────────────────────────────────────────────────────
 function extractErrorMessage(error) {
-  if (error.response?.data?.error?.message) return error.response.data.error.message;
-  if (error.response?.data?.message) return error.response.data.message;
-  if (!error.response) return 'Unable to reach server. Check your connection.';
+  // Backend ErrorResponse shape: { error: { code, message } }
+  if (error.response?.data?.error?.message) {
+    return error.response.data.error.message;
+  }
+  if (error.response?.data?.message) {
+    return error.response.data.message;
+  }
+  if (!error.response) {
+    return 'Unable to reach server. Check your connection.';
+  }
   return 'Something went wrong. Please try again.';
 }

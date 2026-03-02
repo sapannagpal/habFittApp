@@ -93,9 +93,9 @@ function AppStack() {
 }
 
 function AppNavigator() {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isBootstrapping } = useAuth();
 
-  if (isLoading) {
+  if (isBootstrapping) {
     return (
       <View style={styles.loader}>
         <ActivityIndicator size="large" color="#FF6B00" />
