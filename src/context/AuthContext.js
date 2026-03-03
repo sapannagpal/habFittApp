@@ -18,6 +18,7 @@ import React, {
   useCallback,
 } from 'react';
 import { authApi, setAuthExpiredCallback } from '../api/authApi';
+import { setDashboardAuthExpiredCallback } from '../api/dashboardApi';
 import { tokenStorage } from '../utils/tokenStorage';
 
 const AuthContext = createContext(null);
@@ -90,6 +91,7 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     setAuthExpiredCallback(handleAuthExpired);
+    setDashboardAuthExpiredCallback(handleAuthExpired);
   }, [handleAuthExpired]);
 
   // ─── Actions ────────────────────────────────────────────────────────────────

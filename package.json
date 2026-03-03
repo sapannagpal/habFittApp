@@ -12,10 +12,12 @@
   "dependencies": {
     "@react-native-async-storage/async-storage": "^2.1.2",
     "@react-native-community/datetimepicker": "8.4.4",
+    "@react-navigation/bottom-tabs": "^6.6.1",
     "@react-navigation/native": "^6.1.9",
     "@react-navigation/native-stack": "^6.9.17",
     "axios": "^1.7.9",
     "expo": "^54.0.33",
+    "expo-linear-gradient": "^55.0.8",
     "expo-status-bar": "~3.0.9",
     "react": "19.1.0",
     "react-native": "0.81.5",
@@ -24,8 +26,8 @@
   },
   "devDependencies": {
     "@babel/core": "^7.20.0",
-    "@testing-library/react-native": "^12.9.0",
     "@testing-library/jest-native": "^5.4.3",
+    "@testing-library/react-native": "^12.9.0",
     "babel-preset-expo": "^54.0.10",
     "jest": "^29.7.0",
     "jest-expo": "~54.0.0"
@@ -39,7 +41,8 @@
       "node_modules/(?!((jest-)?react-native|@react-native(-community)?)|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@unimodules/.*|unimodules|sentry-expo|native-base|react-native-svg)"
     ],
     "moduleNameMapper": {
-      "@react-native-async-storage/async-storage": "<rootDir>/__mocks__/async-storage.js"
+      "@react-native-async-storage/async-storage": "<rootDir>/__mocks__/async-storage.js",
+      "@expo/vector-icons": "<rootDir>/node_modules/expo/node_modules/@expo/vector-icons"
     }
   },
   "private": true

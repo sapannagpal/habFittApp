@@ -14,11 +14,12 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { ActivityIndicator, View, StyleSheet } from 'react-native';
 
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider, useAuth } from './src/context/AuthContext';
+import MainTabNavigator from './src/navigation/MainTabNavigator';
 import WelcomeScreen from './src/screens/WelcomeScreen';
 import LoginScreen from './src/screens/LoginScreen';
 import RegisterScreen from './src/screens/RegisterScreen';
-import DashboardScreen from './src/screens/DashboardScreen';
 import VerifyEmailScreen from './src/screens/VerifyEmailScreen';
 import ForgotPasswordScreen from './src/screens/ForgotPasswordScreen';
 import ResetCodeScreen from './src/screens/ResetCodeScreen';
@@ -82,12 +83,8 @@ function AuthStack() {
 
 function AppStack() {
   return (
-    <Stack.Navigator screenOptions={HEADER_STYLE}>
-      <Stack.Screen
-        name="Dashboard"
-        component={DashboardScreen}
-        options={{ title: 'habFitt', headerBackVisible: false }}
-      />
+    <Stack.Navigator screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="Main" component={MainTabNavigator} />
     </Stack.Navigator>
   );
 }
@@ -112,9 +109,11 @@ function AppNavigator() {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <AppNavigator />
-    </AuthProvider>
+    <SafeAreaProvider>
+      <AuthProvider>
+        <AppNavigator />
+      </AuthProvider>
+    </SafeAreaProvider>
   );
 }
 

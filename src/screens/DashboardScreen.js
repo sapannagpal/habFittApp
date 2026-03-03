@@ -1,100 +1,187 @@
-import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Alert } from 'react-native';
+/**
+ * HabFitt Daily Mission Dashboard — Post-login home screen.
+ * Consumes GET /api/v1/dashboard from hf-ms-dashboard (port 8082).
+ * Renders state-driven content: WORKOUT / REST_DAY / NO_PLAN / COMPLETED.
+ */
+import React, { useCallback } from 'react';
+import {
+  ScrollView,
+  RefreshControl,
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  ActivityIndicator,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { colors } from '../theme/colors';
+import { useDashboard } from '../hooks/useDashboard';
 import { useAuth } from '../context/AuthContext';
+import DashboardHeader      from '../components/dashboard/DashboardHeader';
+import GreetingSection      from '../components/dashboard/GreetingSection';
+import WorkoutCard          from '../components/dashboard/WorkoutCard';
+import RestDayCard          from '../components/dashboard/RestDayCard';
+import EmptyStateCard       from '../components/dashboard/EmptyStateCard';
+import WeeklyAdherenceDots  from '../components/dashboard/WeeklyAdherenceDots';
+import MiniStatsRow         from '../components/dashboard/MiniStatsRow';
+import CoachNoteCard        from '../components/dashboard/CoachNoteCard';
+import ShimmerBox           from '../components/common/ShimmerBox';
 
-export default function DashboardScreen() {
-  const { user, logout, isLoading } = useAuth();
+// ─── Loading Skeleton ─────────────────────────────────────────────────────────
 
-  const handleLogout = () => {
-    Alert.alert('Sign Out', 'How would you like to sign out?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'This Device', onPress: () => logout(false) },
-      { text: 'All Devices', style: 'destructive', onPress: () => logout(true) },
-    ]);
-  };
-
+function LoadingSkeleton() {
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <View style={styles.header}>
-        <View style={styles.avatar}>
-          <Text style={styles.avatarText}>{(user?.first_name?.[0] ?? 'U').toUpperCase()}</Text>
-        </View>
-        <Text style={styles.greeting}>Hello, {user?.first_name ?? 'User'}</Text>
-        <Text style={styles.role}>{formatRole(user?.role)}</Text>
-      </View>
-
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>Account Details</Text>
-        <InfoRow label="Name" value={user?.first_name ?? '—'} />
-        <InfoRow label="Role" value={formatRole(user?.role)} />
-        <InfoRow label="MFA Status" value={user?.mfa_enabled ? 'Enabled ✓' : 'Not enabled'} valueStyle={user?.mfa_enabled ? styles.valueGreen : styles.valueAmber} />
-        <InfoRow label="User ID" value={user?.id ? `${user.id.slice(0, 8)}…` : '—'} />
-      </View>
-
-      {!user?.mfa_enabled && (
-        <View style={styles.mfaAlert}>
-          <Text style={styles.mfaAlertTitle}>Secure your account</Text>
-          <Text style={styles.mfaAlertBody}>Enable two-factor authentication to protect your health data.</Text>
-          <TouchableOpacity style={styles.mfaAlertBtn}>
-            <Text style={styles.mfaAlertBtnText}>Enable MFA</Text>
-          </TouchableOpacity>
-        </View>
-      )}
-
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>Quick Actions</Text>
-        <TouchableOpacity style={styles.actionRow}><Text style={styles.actionLabel}>My Health Data</Text><Text style={styles.chevron}>›</Text></TouchableOpacity>
-        <View style={styles.separator} />
-        <TouchableOpacity style={styles.actionRow}><Text style={styles.actionLabel}>Appointments</Text><Text style={styles.chevron}>›</Text></TouchableOpacity>
-        <View style={styles.separator} />
-        <TouchableOpacity style={styles.actionRow}><Text style={styles.actionLabel}>Settings</Text><Text style={styles.chevron}>›</Text></TouchableOpacity>
-      </View>
-
-      <TouchableOpacity style={[styles.logoutBtn, isLoading && styles.logoutBtnDisabled]} onPress={handleLogout} disabled={isLoading} testID="dashboard-logout-button">
-        {isLoading ? <ActivityIndicator color="#E53935" /> : <Text style={styles.logoutText}>Sign Out</Text>}
-      </TouchableOpacity>
-    </ScrollView>
-  );
-}
-
-function InfoRow({ label, value, valueStyle }) {
-  return (
-    <View style={styles.infoRow}>
-      <Text style={styles.infoLabel}>{label}</Text>
-      <Text style={[styles.infoValue, valueStyle]}>{value}</Text>
+    <View style={styles.skeletonContainer} testID="loading-skeleton">
+      <ShimmerBox height={24} width="60%" borderRadius={8} style={styles.shimmerItem} />
+      <ShimmerBox height={16} width="40%" borderRadius={6} style={styles.shimmerItem} />
+      <ShimmerBox height={160} borderRadius={16} style={styles.shimmerItem} />
+      <ShimmerBox height={80}  borderRadius={16} style={styles.shimmerItem} />
+      <ShimmerBox height={80}  borderRadius={12} style={styles.shimmerItem} />
     </View>
   );
 }
 
-function formatRole(role) {
-  if (!role) return 'User';
-  return role.charAt(0) + role.slice(1).toLowerCase();
+// ─── Error View ───────────────────────────────────────────────────────────────
+
+function ErrorView({ error, onRetry }) {
+  return (
+    <View style={styles.errorContainer} testID="error-view">
+      <Text style={styles.errorText}>{error}</Text>
+      <TouchableOpacity style={styles.retryButton} onPress={onRetry}>
+        <Text style={styles.retryText}>Retry</Text>
+      </TouchableOpacity>
+    </View>
+  );
 }
 
+// ─── Main Card ────────────────────────────────────────────────────────────────
+
+function MainCard({ state, today, onGoToWorkouts }) {
+  if (state === 'REST_DAY') {
+    return <RestDayCard />;
+  }
+  if (state === 'NO_PLAN') {
+    return <EmptyStateCard onBrowsePlans={onGoToWorkouts} />;
+  }
+  // WORKOUT or COMPLETED
+  return (
+    <WorkoutCard
+      workout={today?.workout}
+      isCompleted={state === 'COMPLETED' || (today?.isCompleted ?? false)}
+      onStart={onGoToWorkouts}
+    />
+  );
+}
+
+// ─── Screen ───────────────────────────────────────────────────────────────────
+
+export default function DashboardScreen({ navigation }) {
+  const insets = useSafeAreaInsets();
+  const { user } = useAuth();
+  const { data, isLoading, isRefreshing, error, refresh } = useDashboard();
+
+  const goToWorkouts = useCallback(
+    () => navigation.navigate('Workouts'),
+    [navigation],
+  );
+
+  const userInitial = user?.first_name?.[0]?.toUpperCase() ?? 'U';
+
+  return (
+    <View style={[styles.root, { paddingTop: insets.top }]}>
+      {/* Always-visible header — streak is 0 during loading */}
+      <DashboardHeader
+        streak={data?.streak?.current ?? 0}
+        userInitial={userInitial}
+      />
+
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={refresh}
+            tintColor={colors.textAccent}
+          />
+        }
+      >
+        {/* Loading state */}
+        {isLoading && !data && <LoadingSkeleton />}
+
+        {/* Error state */}
+        {error && !data && <ErrorView error={error} onRetry={refresh} />}
+
+        {/* Success state */}
+        {data && (
+          <>
+            <GreetingSection greeting={data.greeting} />
+
+            <MainCard
+              state={data.state}
+              today={data.today}
+              onGoToWorkouts={goToWorkouts}
+            />
+
+            <WeeklyAdherenceDots weeklyAdherence={data.weeklyAdherence} />
+
+            <MiniStatsRow stats={data.stats} />
+
+            {data.coachNote ? (
+              <CoachNoteCard note={data.coachNote} />
+            ) : null}
+          </>
+        )}
+      </ScrollView>
+    </View>
+  );
+}
+
+// ─── Styles ───────────────────────────────────────────────────────────────────
+
 const styles = StyleSheet.create({
-  container: { flexGrow: 1, padding: 20, paddingTop: 32, backgroundColor: '#f5f5f5' },
-  header: { alignItems: 'center', marginBottom: 24 },
-  avatar: { width: 72, height: 72, borderRadius: 36, backgroundColor: '#4A90E2', justifyContent: 'center', alignItems: 'center', marginBottom: 12 },
-  avatarText: { fontSize: 30, color: '#fff', fontWeight: '700' },
-  greeting: { fontSize: 24, fontWeight: 'bold', color: '#222' },
-  role: { fontSize: 14, color: '#888', marginTop: 2 },
-  card: { backgroundColor: '#fff', borderRadius: 14, padding: 20, marginBottom: 16, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 8, elevation: 2 },
-  cardTitle: { fontSize: 16, fontWeight: '700', color: '#333', marginBottom: 12 },
-  infoRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: '#f2f2f2' },
-  infoLabel: { fontSize: 14, color: '#888' },
-  infoValue: { fontSize: 14, color: '#333', fontWeight: '500' },
-  valueGreen: { color: '#2E7D32' },
-  valueAmber: { color: '#E65100' },
-  mfaAlert: { backgroundColor: '#FFF8E1', borderRadius: 12, padding: 16, marginBottom: 16, borderLeftWidth: 3, borderLeftColor: '#FFA000' },
-  mfaAlertTitle: { fontSize: 15, fontWeight: '700', color: '#E65100', marginBottom: 4 },
-  mfaAlertBody: { fontSize: 13, color: '#795548', lineHeight: 18 },
-  mfaAlertBtn: { marginTop: 10, backgroundColor: '#FF8F00', borderRadius: 8, padding: 10, alignSelf: 'flex-start' },
-  mfaAlertBtnText: { color: '#fff', fontWeight: '700', fontSize: 13 },
-  actionRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12 },
-  actionLabel: { fontSize: 15, color: '#333' },
-  chevron: { fontSize: 20, color: '#bbb' },
-  separator: { height: 1, backgroundColor: '#f2f2f2' },
-  logoutBtn: { backgroundColor: '#fff', borderWidth: 1.5, borderColor: '#E53935', borderRadius: 10, padding: 16, alignItems: 'center', marginTop: 4, marginBottom: 32 },
-  logoutBtnDisabled: { opacity: 0.5 },
-  logoutText: { color: '#E53935', fontSize: 16, fontWeight: '700' },
+  root: {
+    flex:            1,
+    backgroundColor: colors.bgPrimary,
+  },
+  scroll: {
+    flex: 1,
+  },
+  scrollContent: {
+    paddingBottom: 24,
+  },
+  skeletonContainer: {
+    padding: 16,
+    gap:     12,
+  },
+  shimmerItem: {
+    width: '100%',
+  },
+  errorContainer: {
+    flex:           1,
+    alignItems:     'center',
+    justifyContent: 'center',
+    padding:        32,
+    marginTop:      60,
+  },
+  errorText: {
+    color:     colors.textSecondary,
+    fontSize:  15,
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  retryButton: {
+    backgroundColor: colors.bgCard,
+    borderRadius:    12,
+    paddingVertical: 12,
+    paddingHorizontal: 28,
+    borderWidth:     1,
+    borderColor:     colors.cardBorder,
+  },
+  retryText: {
+    color:      colors.textAccent,
+    fontWeight: '600',
+    fontSize:   15,
+  },
 });
