@@ -19,8 +19,9 @@ export const colors = {
   gradientEnd:   '#E84000',
 
   // Semantic
-  error:   '#E53E3E',
-  success: '#10B981',
+  error:      '#E53E3E',
+  success:    '#10B981',
+  restAccent: '#6366F1',
 
   // Utility
   divider:     'rgba(255,255,255,0.08)',
