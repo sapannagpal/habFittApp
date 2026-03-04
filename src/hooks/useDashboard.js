@@ -48,11 +48,14 @@ export function dashboardReducer(state, action) {
 // ─── Error Extraction ─────────────────────────────────────────────────────────
 
 function extractErrorMessage(error) {
+  if (!error.response && (error.code === 'ERR_NETWORK' || error.message === 'Network Error')) {
+    return 'Unable to load dashboard. Please check your connection and try again.';
+  }
   return (
+    error?.response?.data?.error?.message ??
     error?.response?.data?.message ??
-    error?.response?.data?.error ??
     error?.message ??
-    'An unexpected error occurred'
+    'Something went wrong. Please try again.'
   );
 }
 
