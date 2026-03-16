@@ -2,6 +2,7 @@
  * HabFitt Daily Mission Dashboard — Post-login home screen.
  * Consumes GET /api/v1/dashboard from hf-ms-dashboard (port 8082).
  * Renders state-driven content: WORKOUT / REST_DAY / NO_PLAN / COMPLETED.
+ * Also integrates WorkoutContext for local active-plan state.
  */
 import React, { useCallback } from 'react';
 import {
@@ -17,15 +18,18 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors } from '../theme/colors';
 import { useDashboard } from '../hooks/useDashboard';
 import { useAuth } from '../context/AuthContext';
-import DashboardHeader      from '../components/dashboard/DashboardHeader';
-import GreetingSection      from '../components/dashboard/GreetingSection';
-import WorkoutCard          from '../components/dashboard/WorkoutCard';
-import RestDayCard          from '../components/dashboard/RestDayCard';
-import EmptyStateCard       from '../components/dashboard/EmptyStateCard';
-import WeeklyAdherenceDots  from '../components/dashboard/WeeklyAdherenceDots';
-import MiniStatsRow         from '../components/dashboard/MiniStatsRow';
-import CoachNoteCard        from '../components/dashboard/CoachNoteCard';
-import ShimmerBox           from '../components/common/ShimmerBox';
+import { useWorkout } from '../context/WorkoutContext';
+import DashboardHeader       from '../components/dashboard/DashboardHeader';
+import GreetingSection       from '../components/dashboard/GreetingSection';
+import WorkoutCard           from '../components/dashboard/WorkoutCard';
+import RestDayCard           from '../components/dashboard/RestDayCard';
+import EmptyStateCard        from '../components/dashboard/EmptyStateCard';
+import WeeklyAdherenceDots   from '../components/dashboard/WeeklyAdherenceDots';
+import MiniStatsRow          from '../components/dashboard/MiniStatsRow';
+import CoachNoteCard         from '../components/dashboard/CoachNoteCard';
+import ShimmerBox            from '../components/common/ShimmerBox';
+import TodayWorkoutHeroCard  from '../components/dashboard/TodayWorkoutHeroCard';
+import MissedSessionsCard    from '../components/dashboard/MissedSessionsCard';
 
 // ─── Loading Skeleton ─────────────────────────────────────────────────────────
 
@@ -56,18 +60,57 @@ function ErrorView({ error, onRetry }) {
 
 // ─── Main Card ────────────────────────────────────────────────────────────────
 
-function MainCard({ state, today, onGoToWorkouts }) {
-  if (state === 'REST_DAY') {
-    return <RestDayCard />;
+function MainCard({
+  apiState,
+  today,
+  onGoToWorkouts,
+  dashboardState,
+  todaySession,
+  activePlan,
+  navigation,
+}) {
+  // If there's an active plan, use WorkoutContext state
+  if (activePlan) {
+    if (dashboardState === 'COMPLETED_TODAY') {
+      // Session was just completed — show the workout card in completed state
+      return (
+        <WorkoutCard
+          workout={{ name: todaySession?.name, muscleGroups: todaySession?.muscleGroups }}
+          isCompleted={true}
+          onStart={() => {}}
+        />
+      );
+    }
+    if (dashboardState === 'WORKOUT_TODAY' && todaySession) {
+      return (
+        <TodayWorkoutHeroCard
+          session={todaySession}
+          planName={activePlan.name}
+          onStart={() => navigation.navigate('ActiveSession', {
+            sessionId: todaySession.id,
+          })}
+        />
+      );
+    }
+    if (dashboardState === 'REST_DAY') {
+      return <RestDayCard />;
+    }
+    if (dashboardState === 'MISSED_SESSIONS') {
+      return (
+        <MissedSessionsCard
+          onGetBackOnTrack={() => navigation.navigate('Workouts')}
+        />
+      );
+    }
   }
-  if (state === 'NO_PLAN') {
-    return <EmptyStateCard onBrowsePlans={onGoToWorkouts} />;
-  }
-  // WORKOUT or COMPLETED
+
+  // Fallback to API-driven state (no active plan or NO_PLAN state)
+  if (apiState === 'REST_DAY') return <RestDayCard />;
+  if (apiState === 'NO_PLAN') return <EmptyStateCard onBrowsePlans={onGoToWorkouts} />;
   return (
     <WorkoutCard
       workout={today?.workout}
-      isCompleted={state === 'COMPLETED' || (today?.isCompleted ?? false)}
+      isCompleted={apiState === 'COMPLETED' || (today?.isCompleted ?? false)}
       onStart={onGoToWorkouts}
     />
   );
@@ -79,6 +122,7 @@ export default function DashboardScreen({ navigation }) {
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const { data, isLoading, isRefreshing, error, refresh } = useDashboard();
+  const { dashboardState, todaySession, activePlan, isPlanLoading } = useWorkout();
 
   const goToWorkouts = useCallback(
     () => navigation.navigate('Workouts'),
@@ -118,11 +162,19 @@ export default function DashboardScreen({ navigation }) {
           <>
             <GreetingSection greeting={data.greeting} />
 
-            <MainCard
-              state={data.state}
-              today={data.today}
-              onGoToWorkouts={goToWorkouts}
-            />
+            {isPlanLoading && !activePlan ? (
+              <LoadingSkeleton />
+            ) : (
+              <MainCard
+                apiState={data.state}
+                today={data.today}
+                onGoToWorkouts={goToWorkouts}
+                dashboardState={dashboardState}
+                todaySession={todaySession}
+                activePlan={activePlan}
+                navigation={navigation}
+              />
+            )}
 
             <WeeklyAdherenceDots weeklyAdherence={data.weeklyAdherence} />
 

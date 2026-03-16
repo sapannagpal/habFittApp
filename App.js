@@ -8,15 +8,22 @@
  *
  * Stack switching is driven by AuthContext; no manual navigation.navigate
  * calls are needed for auth transitions.
+ *
+ * WorkoutBootstrapper: inner component that bridges AuthContext and
+ * WorkoutContext — calls bootstrapActivePlan() once the user is authenticated.
  */
-import React from 'react';
+import React, { useEffect } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { ActivityIndicator, View, StyleSheet } from 'react-native';
 
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider, useAuth } from './src/context/AuthContext';
+import { WorkoutProvider, useWorkout } from './src/context/WorkoutContext';
 import MainTabNavigator from './src/navigation/MainTabNavigator';
+import ActiveSessionScreen from './src/screens/ActiveSessionScreen';
+import WorkoutSummaryScreen from './src/screens/WorkoutSummaryScreen';
+import WeightUnitScreen from './src/screens/WeightUnitScreen';
 import WelcomeScreen from './src/screens/WelcomeScreen';
 import LoginScreen from './src/screens/LoginScreen';
 import RegisterScreen from './src/screens/RegisterScreen';
@@ -33,6 +40,29 @@ const HEADER_STYLE = {
   headerTintColor: '#fff',
   headerTitleStyle: { fontWeight: '700' },
 };
+
+// ─── WorkoutBootstrapper ──────────────────────────────────────────────────────
+
+/**
+ * Bridges AuthContext → WorkoutContext.
+ * Calls bootstrapActivePlan() once the user is authenticated and not bootstrapping.
+ * Must be rendered inside both AuthProvider and WorkoutProvider.
+ * Returns null — no UI.
+ */
+function WorkoutBootstrapper() {
+  const { isAuthenticated, isBootstrapping } = useAuth();
+  const { bootstrapActivePlan } = useWorkout();
+
+  useEffect(() => {
+    if (isAuthenticated && !isBootstrapping) {
+      bootstrapActivePlan();
+    }
+  }, [isAuthenticated, isBootstrapping]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return null;
+}
+
+// ─── Stacks ──────────────────────────────────────────────────────────────────
 
 function AuthStack() {
   return (
@@ -85,6 +115,33 @@ function AppStack() {
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
       <Stack.Screen name="Main" component={MainTabNavigator} />
+      <Stack.Screen
+        name="ActiveSession"
+        component={ActiveSessionScreen}
+        options={{
+          presentation: 'fullScreenModal',
+          headerShown: false,
+          animation: 'slide_from_bottom',
+        }}
+      />
+      <Stack.Screen
+        name="WorkoutSummary"
+        component={WorkoutSummaryScreen}
+        options={{
+          presentation: 'fullScreenModal',
+          headerShown: false,
+          animation: 'slide_from_bottom',
+        }}
+      />
+      <Stack.Screen
+        name="WeightUnit"
+        component={WeightUnitScreen}
+        options={{
+          presentation: 'transparentModal',
+          headerShown: false,
+          animation: 'fade',
+        }}
+      />
     </Stack.Navigator>
   );
 }
@@ -107,11 +164,17 @@ function AppNavigator() {
   );
 }
 
+// ─── Root ─────────────────────────────────────────────────────────────────────
+
 export default function App() {
   return (
     <SafeAreaProvider>
       <AuthProvider>
-        <AppNavigator />
+        <WorkoutProvider>
+          {/* WorkoutBootstrapper triggers plan hydration once auth is confirmed */}
+          <WorkoutBootstrapper />
+          <AppNavigator />
+        </WorkoutProvider>
       </AuthProvider>
     </SafeAreaProvider>
   );

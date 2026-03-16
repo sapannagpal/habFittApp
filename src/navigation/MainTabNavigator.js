@@ -6,8 +6,8 @@ import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
 import DashboardScreen from '../screens/DashboardScreen';
-import WorkoutsScreen  from '../screens/WorkoutsScreen';
-import HistoryScreen   from '../screens/HistoryScreen';
+import WorkoutsStack   from './WorkoutsStack';
+import HistoryStack    from './HistoryStack';
 import ProfileScreen   from '../screens/ProfileScreen';
 import { colors } from '../theme/colors';
 
@@ -48,14 +48,14 @@ export default function MainTabNavigator() {
       />
       <Tab.Screen
         name="Workouts"
-        component={WorkoutsScreen}
+        component={WorkoutsStack}
         options={{
           tabBarIcon: tabIcon('barbell', 'barbell-outline'),
         }}
       />
       <Tab.Screen
         name="History"
-        component={HistoryScreen}
+        component={HistoryStack}
         options={{
           tabBarIcon: tabIcon('calendar', 'calendar-outline'),
         }}
