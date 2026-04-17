@@ -1,0 +1,578 @@
+/**
+ * Weekly Schedule — shows the 7-day workout plan for the current week.
+ * User can tap a scheduled day to start/continue that session.
+ * Supports week navigation (prev/next).
+ *
+ * API: GET /plans/{planId}/weeks/{weekNumber}  (path param, not query param)
+ * Active plan field: plan.programmeName (not templateName)
+ */
+import React, { useState, useEffect, useCallback } from 'react';
+import {
+  View,
+  Text,
+  ScrollView,
+  TouchableOpacity,
+  ActivityIndicator,
+  StyleSheet,
+  RefreshControl,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
+import { colors } from '../../theme/colors';
+import { workoutApi } from '../../api/workoutApi';
+import SwapDaySheet    from '../../components/workout/SwapDaySheet';
+import CombineDaySheet from '../../components/workout/CombineDaySheet';
+
+// ─── Day constants ────────────────────────────────────────────────────────────
+
+const DAY_SHORT = {
+  // String keys (ISO day names)
+  MONDAY:    'MON',
+  TUESDAY:   'TUE',
+  WEDNESDAY: 'WED',
+  THURSDAY:  'THU',
+  FRIDAY:    'FRI',
+  SATURDAY:  'SAT',
+  SUNDAY:    'SUN',
+  // Numeric keys (ISO-8601: 1=Mon … 7=Sun) — backend returns numeric dayOfWeek
+  1: 'MON', 2: 'TUE', 3: 'WED', 4: 'THU', 5: 'FRI', 6: 'SAT', 7: 'SUN',
+};
+
+// ─── numDay helper ────────────────────────────────────────────────────────────
+
+const numDay = (d) =>
+  typeof d === 'number' ? d
+    : ({ MONDAY:1,TUESDAY:2,WEDNESDAY:3,THURSDAY:4,FRIDAY:5,SATURDAY:6,SUNDAY:7 }[d] ?? 0);
+
+// ─── Day Card ─────────────────────────────────────────────────────────────────
+
+function DayCard({ day, onPress, onLongPress, onMenuPress }) {
+  const isRest   = day.restDay;
+  const isDone   = day.status === 'COMPLETED';
+  const isActive = day.status === 'IN_PROGRESS';
+  const canStart = !isRest && !isDone && day.sessionId;
+  const short    = DAY_SHORT[day.dayOfWeek] ?? String(day.dayOfWeek ?? '').slice(0, 3);
+
+  let statusIcon = null;
+  if (isDone)   statusIcon = <Ionicons name="checkmark-circle" size={20} color={colors.success} />;
+  if (isActive) statusIcon = <Ionicons name="play-circle" size={20} color={colors.textAccent} />;
+  if (isRest)   statusIcon = <Ionicons name="moon-outline" size={18} color={colors.restAccent} />;
+
+  return (
+    <TouchableOpacity
+      style={[
+        styles.dayCard,
+        isDone   && styles.dayCardDone,
+        isActive && styles.dayCardActive,
+        isRest   && styles.dayCardRest,
+      ]}
+      onPress={() => canStart && onPress(day)}
+      onLongPress={() => canStart && onLongPress?.(day)}
+      activeOpacity={canStart ? 0.7 : 1}
+      disabled={!canStart}
+    >
+      <View style={styles.dayLeft}>
+        <Text style={styles.dayShort}>{short}</Text>
+        <Text style={[styles.dayName, isRest && styles.dayNameRest]}>
+          {isRest ? 'Rest Day' : (day.workoutName ?? 'Workout')}
+        </Text>
+        {day.modified && (
+          <View style={styles.modBadge}>
+            <Text style={styles.modText}>Modified</Text>
+          </View>
+        )}
+      </View>
+      <View style={styles.dayRight}>
+        {statusIcon}
+        {canStart && (
+          <TouchableOpacity
+            onPress={() => onMenuPress?.(day)}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            style={styles.dayMenuBtn}
+          >
+            <Ionicons name="ellipsis-vertical" size={16} color={colors.textSecondary} />
+          </TouchableOpacity>
+        )}
+        {canStart && (
+          <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
+        )}
+      </View>
+    </TouchableOpacity>
+  );
+}
+
+// ─── Screen ───────────────────────────────────────────────────────────────────
+
+export default function WeeklyScheduleScreen({ route, navigation }) {
+  const { planId, plan } = route.params;
+
+  // Start on the plan's current week if provided, otherwise week 1
+  const initialWeek = plan?.currentWeek ?? 1;
+  const totalWeeks  = plan?.totalWeeks ?? null;
+
+  const [weekNumber, setWeekNumber] = useState(initialWeek);
+  const [schedule, setSchedule]     = useState(null);
+  const [loading, setLoading]       = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError]           = useState(null);
+  const [startingSession, setStartingSession] = useState(null);
+
+  const [swapSource, setSwapSource]       = useState(null);
+  const [combineSource, setCombineSource] = useState(null);
+  const [inlineError, setInlineError]     = useState(null);
+
+  const load = useCallback(
+    async (wk, isRefresh = false) => {
+      try {
+        isRefresh ? setRefreshing(true) : setLoading(true);
+        setError(null);
+        // Path param: GET /plans/{planId}/weeks/{weekNumber}
+        const { data } = await workoutApi.getWeeklySchedule(planId, wk);
+        setSchedule(data);
+      } catch (e) {
+        if (__DEV__) {
+          console.warn(
+            '[WeeklySchedule] load failed:',
+            'status=', e.response?.status,
+            'url=', e.config?.url,
+            'message=', e.message,
+            'data=', JSON.stringify(e.response?.data),
+          );
+        }
+        setError('Could not load schedule. Pull down to retry.');
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    },
+    [planId],
+  );
+
+  useEffect(() => {
+    load(weekNumber);
+  }, [load, weekNumber]);
+
+  useEffect(() => {
+    if (!inlineError) return;
+    const t = setTimeout(() => setInlineError(null), 4000);
+    return () => clearTimeout(t);
+  }, [inlineError]);
+
+  const onRefresh = useCallback(() => load(weekNumber, true), [load, weekNumber]);
+
+  // Open a session for preview. We do NOT call startSession here — that's
+  // deferred to the first set log (lazy-start). This keeps tapping a day
+  // cheap and side-effect-free: the user can back out without creating any
+  // backend state. If the session is already IN_PROGRESS (e.g. resumed after
+  // a crash), getSessionDetail still returns the full exercise list and the
+  // ActiveSession screen will treat it as already-started via route params.
+  const handleDayPress = useCallback(
+    async (day) => {
+      if (!day.sessionId) return;
+      setStartingSession(day.sessionId);
+      try {
+        const { data: session } = await workoutApi.getSessionDetail(day.sessionId);
+        const hasStarted = session.status === 'IN_PROGRESS';
+        navigation.navigate('ActiveSession', { session, hasStarted });
+      } catch (e) {
+        if (__DEV__) console.warn('[WeeklySchedule] getSessionDetail failed:', e.response?.status, e.message);
+        setError('Could not open session. Please try again.');
+      } finally {
+        setStartingSession(null);
+      }
+    },
+    [navigation],
+  );
+
+  const handleSwap = useCallback(
+    async (sourceDay, targetDay) => {
+      // Capture the latest state atomically inside the updater — not from the
+      // closure — so rapid taps never revert to a stale snapshot.
+      let snapshot;
+      setSchedule(prev => {
+        snapshot = prev;
+        const arr = [...normaliseDays(prev)];
+        const sIdx = arr.findIndex(d => numDay(d.dayOfWeek) === sourceDay);
+        const tIdx = arr.findIndex(d => numDay(d.dayOfWeek) === targetDay);
+        if (sIdx >= 0 && tIdx >= 0) {
+          const sc = { ...arr[sIdx] };
+          const tc = { ...arr[tIdx] };
+          arr[sIdx] = { ...tc, dayOfWeek: sc.dayOfWeek, modified: true };
+          arr[tIdx] = { ...sc, dayOfWeek: tc.dayOfWeek, modified: true };
+        }
+        return { days: arr };
+      });
+      setSwapSource(null);
+      try {
+        await workoutApi.swapDay(planId, sourceDay, { targetDay });
+      } catch {
+        if (snapshot !== undefined) setSchedule(snapshot);
+        setInlineError('Swap failed. Please try again.');
+      }
+    },
+    [planId],
+  );
+
+  const handleCombine = useCallback(
+    async (sourceDay, targetDay) => {
+      let snapshot;
+      setSchedule(prev => {
+        snapshot = prev;
+        const arr = [...normaliseDays(prev)];
+        const sIdx = arr.findIndex(d => numDay(d.dayOfWeek) === sourceDay);
+        const tIdx = arr.findIndex(d => numDay(d.dayOfWeek) === targetDay);
+        if (sIdx >= 0 && tIdx >= 0) {
+          const srcName = arr[sIdx].workoutName ?? '';
+          arr[sIdx] = { ...arr[sIdx], restDay: true, sessionId: null, workoutName: null, status: null, modified: true };
+          arr[tIdx] = {
+            ...arr[tIdx],
+            workoutName: `${arr[tIdx].workoutName ?? 'Workout'} + ${srcName}`.trim(),
+            modified: true,
+          };
+        }
+        return { days: arr };
+      });
+      setCombineSource(null);
+      try {
+        await workoutApi.combineDays(planId, { sourceDay, targetDay });
+      } catch {
+        if (snapshot !== undefined) setSchedule(snapshot);
+        setInlineError('Combine failed. Please try again.');
+      }
+    },
+    [planId],
+  );
+
+  const changeWeek = (delta) => {
+    const next = weekNumber + delta;
+    if (next < 1) return;
+    if (totalWeeks && next > totalWeeks) return;
+    setWeekNumber(next);
+  };
+
+  const handleAbandonPlan = async () => {
+    try {
+      await workoutApi.abandonActivePlan();
+    } catch (e) {
+      if (__DEV__) console.warn('[WeeklySchedule] abandonPlan failed:', e.response?.status, e.message);
+    } finally {
+      navigation.replace('PlanCatalogue');
+    }
+  };
+
+  // Resolve the days array from the API response.
+  // The 8084 service returns a PlanWeek entity; sessions may be at
+  // data.sessions (array) or data.days (array) depending on the serialisation.
+  // We normalise both shapes here so the DayCard receives a consistent object.
+  const normaliseDays = (data) => {
+    if (!data) return [];
+
+    // Shape A: { days: [...] }
+    if (Array.isArray(data.days)) return data.days;
+
+    // Shape B: { sessions: [...] } — map to the same field names DayCard expects
+    if (Array.isArray(data.sessions)) {
+      return data.sessions.map((s) => ({
+        dayOfWeek:   s.dayOfWeek,
+        workoutName: s.workoutName ?? s.sessionName ?? null,
+        sessionId:   s.id ?? s.sessionId,
+        status:      s.status,
+        restDay:     s.restDay ?? false,
+        modified:    s.modified ?? false,
+      }));
+    }
+
+    return [];
+  };
+
+  const days = normaliseDays(schedule);
+
+  return (
+    <SafeAreaView style={styles.container}>
+      {/* Header */}
+      <View style={styles.header}>
+        <View style={styles.headerText}>
+          {/* programmeName replaces the old templateName field */}
+          <Text style={styles.planName} numberOfLines={1}>
+            {plan?.programmeName ?? 'My Plan'}
+          </Text>
+          {totalWeeks ? (
+            <Text style={styles.headerSub}>{totalWeeks} week programme</Text>
+          ) : (
+            <Text style={styles.headerSub}>Active Plan</Text>
+          )}
+        </View>
+        <TouchableOpacity
+          onPress={handleAbandonPlan}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Ionicons name="ellipsis-horizontal" size={22} color={colors.textSecondary} />
+        </TouchableOpacity>
+      </View>
+
+      {/* Week navigation */}
+      <View style={styles.weekNav}>
+        <TouchableOpacity
+          onPress={() => changeWeek(-1)}
+          disabled={weekNumber <= 1}
+          style={[styles.weekBtn, weekNumber <= 1 && styles.weekBtnDisabled]}
+        >
+          <Ionicons
+            name="chevron-back"
+            size={20}
+            color={weekNumber <= 1 ? colors.textSecondary : colors.textPrimary}
+          />
+        </TouchableOpacity>
+        <Text style={styles.weekLabel}>Week {weekNumber}</Text>
+        <TouchableOpacity
+          onPress={() => changeWeek(1)}
+          disabled={totalWeeks != null && weekNumber >= totalWeeks}
+          style={[
+            styles.weekBtn,
+            totalWeeks != null && weekNumber >= totalWeeks && styles.weekBtnDisabled,
+          ]}
+        >
+          <Ionicons
+            name="chevron-forward"
+            size={20}
+            color={
+              totalWeeks != null && weekNumber >= totalWeeks
+                ? colors.textSecondary
+                : colors.textPrimary
+            }
+          />
+        </TouchableOpacity>
+      </View>
+
+      {/* Content */}
+      {loading ? (
+        <View style={styles.center}>
+          <ActivityIndicator size="large" color={colors.textAccent} />
+        </View>
+      ) : (
+        <ScrollView
+          contentContainerStyle={styles.list}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={colors.textAccent}
+            />
+          }
+          showsVerticalScrollIndicator={false}
+        >
+          {inlineError && (
+            <View style={styles.inlineErrorBanner}>
+              <Ionicons name="warning-outline" size={16} color={colors.error ?? '#FF3B30'} />
+              <Text style={styles.inlineErrorText}>{inlineError}</Text>
+            </View>
+          )}
+
+          {error ? (
+            <View style={styles.errorBox}>
+              <Ionicons name="alert-circle-outline" size={32} color={colors.textSecondary} />
+              <Text style={styles.errorText}>{error}</Text>
+            </View>
+          ) : days.length === 0 ? (
+            <View style={styles.errorBox}>
+              <Text style={styles.errorText}>No sessions found for this week.</Text>
+            </View>
+          ) : (
+            days.map((day, idx) => (
+              <DayCard
+                key={day.sessionId ?? `day-${day.dayOfWeek}-${idx}`}
+                day={day}
+                onPress={handleDayPress}
+                onLongPress={(d) => setSwapSource(numDay(d.dayOfWeek))}
+                onMenuPress={(d) => setCombineSource(numDay(d.dayOfWeek))}
+              />
+            ))
+          )}
+
+          {startingSession && (
+            <View style={styles.startingOverlay}>
+              <ActivityIndicator color={colors.textAccent} />
+              <Text style={styles.startingText}>Starting session…</Text>
+            </View>
+          )}
+        </ScrollView>
+      )}
+
+      <SwapDaySheet
+        visible={swapSource != null}
+        sourceDay={swapSource}
+        days={days}
+        onSwap={handleSwap}
+        onDismiss={() => setSwapSource(null)}
+      />
+      <CombineDaySheet
+        visible={combineSource != null}
+        sourceDay={combineSource}
+        days={days}
+        onCombine={handleCombine}
+        onDismiss={() => setCombineSource(null)}
+      />
+    </SafeAreaView>
+  );
+}
+
+// ─── Styles ───────────────────────────────────────────────────────────────────
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: colors.bgPrimary,
+  },
+  center: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 4,
+  },
+  headerText: {
+    flex: 1,
+    marginRight: 12,
+  },
+  planName: {
+    color: colors.textPrimary,
+    fontSize: 22,
+    fontWeight: '800',
+  },
+  headerSub: {
+    color: colors.textSecondary,
+    fontSize: 13,
+    marginTop: 1,
+  },
+  weekNav: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 24,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.divider,
+    marginBottom: 4,
+  },
+  weekBtn: {
+    padding: 8,
+  },
+  weekBtnDisabled: {
+    opacity: 0.3,
+  },
+  weekLabel: {
+    color: colors.textPrimary,
+    fontSize: 15,
+    fontWeight: '600',
+    minWidth: 70,
+    textAlign: 'center',
+  },
+  list: {
+    padding: 16,
+    gap: 10,
+    paddingBottom: 32,
+  },
+  // Day cards
+  dayCard: {
+    backgroundColor: colors.bgCard,
+    borderRadius: 14,
+    padding: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+  },
+  dayCardDone: {
+    borderColor: `${colors.success}40`,
+    backgroundColor: `${colors.success}0A`,
+  },
+  dayCardActive: {
+    borderColor: `${colors.textAccent}60`,
+    backgroundColor: `${colors.textAccent}0A`,
+  },
+  dayCardRest: {
+    borderColor: `${colors.restAccent}30`,
+    backgroundColor: `${colors.restAccent}08`,
+  },
+  dayLeft: {
+    flex: 1,
+    gap: 3,
+  },
+  dayShort: {
+    color: colors.textSecondary,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 1,
+  },
+  dayName: {
+    color: colors.textPrimary,
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  dayNameRest: {
+    color: colors.restAccent,
+  },
+  dayRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  dayMenuBtn: { padding: 4 },
+  modBadge: {
+    backgroundColor: `${colors.textAccent}20`,
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    alignSelf: 'flex-start',
+  },
+  modText: {
+    color: colors.textAccent,
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  errorBox: {
+    alignItems: 'center',
+    padding: 32,
+    gap: 12,
+  },
+  errorText: {
+    color: colors.textSecondary,
+    fontSize: 14,
+    textAlign: 'center',
+  },
+  startingOverlay: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    padding: 16,
+  },
+  startingText: {
+    color: colors.textSecondary,
+    fontSize: 14,
+  },
+  inlineErrorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#FF3B3015',
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#FF3B3030',
+  },
+  inlineErrorText: {
+    color: '#FF3B30',
+    fontSize: 13,
+    fontWeight: '500',
+    flex: 1,
+  },
+});
