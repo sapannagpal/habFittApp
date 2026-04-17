@@ -5,7 +5,8 @@
  *  - Bootstrap: reads stored tokens on app startup, sets initial auth state
  *  - Actions: login(), register(), logout()
  *  - Error surface: exposes last error message for screens to display
- *  - Session expiry: registers callback with authApi to receive "session expired" events
+ *  - Session expiry: registers callback with authApi, dashboardApi, and workoutApi
+ *    to receive "session expired" events and trigger logout
  *
  * Usage:
  *   const { isAuthenticated, user, login, logout, isLoading, isBootstrapping, error } = useAuth();
@@ -19,7 +20,9 @@ import React, {
 } from 'react';
 import { authApi, setAuthExpiredCallback } from '../api/authApi';
 import { setDashboardAuthExpiredCallback } from '../api/dashboardApi';
+import { setWorkoutAuthExpiredCallback } from '../api/workoutApi';
 import { tokenStorage } from '../utils/tokenStorage';
+import { exerciseCache } from '../utils/exerciseCache';
 
 const AuthContext = createContext(null);
 
@@ -84,7 +87,7 @@ export function AuthProvider({ children }) {
     })();
   }, []);
 
-  // Register token-refresh-failure callback so the interceptor can signal logout
+  // Register token-refresh-failure callbacks so all API interceptors can signal logout
   const handleAuthExpired = useCallback(() => {
     dispatch({ type: 'AUTH_LOGOUT' });
   }, []);
@@ -92,6 +95,7 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     setAuthExpiredCallback(handleAuthExpired);
     setDashboardAuthExpiredCallback(handleAuthExpired);
+    setWorkoutAuthExpiredCallback(handleAuthExpired);
   }, [handleAuthExpired]);
 
   // ─── Actions ────────────────────────────────────────────────────────────────
@@ -129,6 +133,7 @@ export function AuthProvider({ children }) {
       // Always clear local state, even if the API call fails
     } finally {
       await tokenStorage.clearTokens();
+      exerciseCache.clear();
       dispatch({ type: 'AUTH_LOGOUT' });
     }
   }, []);

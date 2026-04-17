@@ -2,20 +2,23 @@
  * HabFitt Workout API client.
  * Targets hf-ms-workout on port 8084. NO /api/v1 prefix — all routes at root level.
  * Injects Bearer token from tokenStorage on every request.
- * On 401/403 → silently refreshes the access token once and retries the call.
- *              If refresh fails → fires _onAuthExpired (registered by AuthContext).
+ * On 401/403 → attempts token refresh; queues concurrent requests during refresh.
+ *              If refresh fails → fires _onWorkoutAuthExpired (registered by AuthContext).
+ *
+ * NOTE: hf-ms-workout returns 403 (not 401) for expired JWTs — Spring Security's
+ * JwtAuthenticationFilter rejects invalid tokens before the 401 path fires.
+ * Both status codes trigger the refresh flow.
  */
 import axios from 'axios';
-import { WORKOUT_BASE_URL, API_TIMEOUT_MS } from '../config/apiConfig';
+import { WORKOUT_BASE_URL, API_BASE_URL, API_TIMEOUT_MS } from '../config/apiConfig';
 import { tokenStorage } from '../utils/tokenStorage';
-import { refreshAccessToken } from './authApi';
 
 // ─── Auth-Expired Callback ────────────────────────────────────────────────────
 
-let _onAuthExpired = null;
+let _onWorkoutAuthExpired = null;
 
 export function setWorkoutAuthExpiredCallback(cb) {
-  _onAuthExpired = cb;
+  _onWorkoutAuthExpired = cb;
 }
 
 // ─── Workout Client ───────────────────────────────────────────────────────────
@@ -25,6 +28,15 @@ const workoutClient = axios.create({
   timeout: API_TIMEOUT_MS,
   headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
 });
+
+// Raw axios pointing at auth service — used ONLY for token refresh (no interceptors)
+const rawAuthAxios = axios.create({
+  baseURL: API_BASE_URL,
+  timeout: API_TIMEOUT_MS,
+  headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+});
+
+// ─── Request Interceptor ──────────────────────────────────────────────────────
 
 workoutClient.interceptors.request.use(
   async (config) => {
@@ -37,27 +49,69 @@ workoutClient.interceptors.request.use(
   (error) => Promise.reject(error),
 );
 
-// On 401 or 403 (both used by hf-ms-workout for JWT failures — the service's
-// JwtAuthenticationFilter silently rejects invalid tokens which results in 403
-// from Spring Security, not 401), try a silent refresh once per request and
-// replay the original call. If refresh itself fails → fire _onAuthExpired so
-// the app logs out.
+// ─── Response Interceptor — queue-based refresh ───────────────────────────────
+// Handles concurrent 401/403 responses: only one refresh fires; all other
+// failing requests queue and replay once the new token arrives.
+
+let isRefreshing = false;
+let refreshQueue = [];
+
+const drainQueue = (accessToken, error) => {
+  refreshQueue.forEach(({ resolve, reject }) =>
+    error ? reject(error) : resolve(accessToken),
+  );
+  refreshQueue = [];
+};
+
 workoutClient.interceptors.response.use(
   (response) => response,
   async (error) => {
     const status = error.response?.status;
     const originalRequest = error.config;
-    if ((status === 401 || status === 403) && originalRequest && !originalRequest._retried) {
-      originalRequest._retried = true;
-      try {
-        const newToken = await refreshAccessToken();
-        originalRequest.headers.Authorization = `Bearer ${newToken}`;
-        return workoutClient(originalRequest);
-      } catch {
-        _onAuthExpired?.();
-      }
+
+    // Only intercept 401 / 403 — hf-ms-workout returns 403 for expired JWTs
+    if ((status !== 401 && status !== 403) || originalRequest._retried) {
+      return Promise.reject(error);
     }
-    return Promise.reject(error);
+
+    // Another refresh already in-flight — queue this request
+    if (isRefreshing) {
+      return new Promise((resolve, reject) => {
+        refreshQueue.push({
+          resolve: (newToken) => {
+            originalRequest.headers.Authorization = `Bearer ${newToken}`;
+            originalRequest._retried = true;
+            resolve(workoutClient(originalRequest));
+          },
+          reject,
+        });
+      });
+    }
+
+    originalRequest._retried = true;
+    isRefreshing = true;
+
+    try {
+      const tokens = await tokenStorage.getTokens();
+      if (!tokens?.refreshToken) throw new Error('No refresh token available');
+
+      const { data } = await rawAuthAxios.post('/auth/token/refresh', {
+        refresh_token: tokens.refreshToken,
+      });
+
+      await tokenStorage.saveTokens(data);
+      isRefreshing = false;
+      drainQueue(data.access_token, null);
+
+      originalRequest.headers.Authorization = `Bearer ${data.access_token}`;
+      return workoutClient(originalRequest);
+    } catch (refreshError) {
+      isRefreshing = false;
+      drainQueue(null, refreshError);
+      await tokenStorage.clearTokens();
+      _onWorkoutAuthExpired?.();
+      return Promise.reject(refreshError);
+    }
   },
 );
 
@@ -72,31 +126,31 @@ export const workoutApi = {
    * @param {object} params - { fitnessGoal, experienceLevel, preferredFormat,
    *   availableEquipment, daysPerWeek, sessionDurationMinutes,
    *   injuryFlags, bodyWeightKg, totalWeeks }
-   * @returns {object} { id, programmeName, templateId, format, totalWeeks,
-   *   currentWeek, status, createdAt }
    */
   generatePlan: (params) =>
     workoutClient.post('/plans/generate', params),
 
-  /**
-   * Get the user's currently active plan.
-   * Returns 404 if no active plan exists.
-   */
+  /** Get the user's currently active plan. Returns 404 if none. */
   getActivePlan: () =>
     workoutClient.get('/plans/active'),
 
-  /**
-   * Get a plan by ID.
-   */
+  /** Get a plan by ID. */
   getPlan: (planId) =>
     workoutClient.get(`/plans/${planId}`),
 
   /**
    * Get the weekly schedule for a plan.
-   * weekNumber is a PATH param (e.g. /plans/123/weeks/1).
+   * weekNumber is a PATH param: GET /plans/{planId}/weeks/{weekNumber}
    */
   getWeeklySchedule: (planId, weekNumber) =>
     workoutClient.get(`/plans/${planId}/weeks/${weekNumber}`),
+
+  /**
+   * Abandon the user's currently active plan.
+   * @returns {object} { planId, status }
+   */
+  abandonActivePlan: () =>
+    workoutClient.post('/plans/active/abandon'),
 
   // ── Session Lifecycle ────────────────────────────────────────────────────────
 
@@ -111,26 +165,17 @@ export const workoutApi = {
    * Complete a session.
    * @param {string} sessionId
    * @param {string} feedback - TOO_EASY | JUST_RIGHT | TOO_HARD | PARTIAL
-   * @returns {object} { sessionId, status, actualDurationSeconds }
    */
-  completeSession: (sessionId, feedback) =>
+  completeSession: (sessionId, feedback = null) =>
     workoutClient.post(`/sessions/${sessionId}/complete`, { feedback }),
 
   /**
    * Abandon a session.
    * @param {string} sessionId
    * @param {string} [reason] - Optional reason string.
-   * @returns {object} { sessionId, status }
    */
   abandonSession: (sessionId, reason) =>
     workoutClient.post(`/sessions/${sessionId}/abandon`, reason ? { reason } : {}),
-
-  /**
-   * Abandon the user's currently active plan.
-   * @returns {object} { planId, status }
-   */
-  abandonActivePlan: () =>
-    workoutClient.post('/plans/active/abandon'),
 
   // ── Set Logging ──────────────────────────────────────────────────────────────
 
@@ -147,7 +192,6 @@ export const workoutApi = {
    * Skip a set.
    * @param {string} sessionId
    * @param {object} setEntry - { exerciseId, setNumber }
-   * @returns {object} ExerciseLogResponse with SKIPPED status
    */
   skipSet: (sessionId, setEntry) =>
     workoutClient.post(`/sessions/${sessionId}/sets/skip`, setEntry),
@@ -159,18 +203,13 @@ export const workoutApi = {
    * @param {number} page - Zero-based page index (default 0).
    * @param {number} size - Page size (default 10).
    * @returns Spring Page: { content: [...], totalElements, totalPages, ... }
-   *   Each item: { sessionId, sessionName, status, feedback, startedAt,
-   *   completedAt, actualDurationSeconds, exerciseCount }
    */
   getHistory: (page = 0, size = 10) =>
     workoutClient.get('/sessions/history', { params: { page, size } }),
 
   /**
    * Get full session detail including exercises and set logs.
-   * @returns {object} { sessionId, sessionName, status, feedback, startedAt,
-   *   completedAt, actualDurationSeconds, exercises: [{ sessionExerciseId,
-   *   exerciseId, exerciseOrder, sets, reps, weightKg, restSeconds, metricType,
-   *   warmup, cooldown, logs: [...] }] }
+   * @returns {object} { sessionId, sessionName, status, exercises: [...] }
    */
   getSessionDetail: (sessionId) =>
     workoutClient.get(`/sessions/${sessionId}/detail`),
@@ -180,21 +219,17 @@ export const workoutApi = {
   /**
    * List all exercises.
    * @param {string} [format] - Optional filter by format (e.g. GYM, HOME).
-   * @returns {Array} [{ id, name, format, primaryMuscle, secondaryMuscles,
-   *   movementPattern, equipment, experienceLevel, metricType, active }]
    */
   getExercises: (format) =>
     workoutClient.get('/exercises', format ? { params: { format } } : undefined),
 
-  /**
-   * Get a single exercise by ID.
-   */
+  /** Get a single exercise by ID. */
   getExercise: (id) =>
     workoutClient.get(`/exercises/${id}`),
 
   /**
-   * Get alternative exercises.
-   * @param {string} id - Exercise ID to find alternatives for.
+   * Get alternative exercises for a given exercise ID.
+   * @param {string} id - Exercise ID.
    * @param {object} [options] - { equipment, injuries, limit } (all optional).
    */
   getAlternatives: (id, { equipment, injuries, limit = 6 } = {}) => {
@@ -205,13 +240,15 @@ export const workoutApi = {
   },
 
   /**
-   * Swap an exercise within a session or across the whole plan.
+   * Swap an exercise within a session or across the whole plan (legacy endpoint).
    * @param {string} id - The exercise being replaced.
    * @param {string} sessionId - Query param identifying the active session.
    * @param {object} body - { targetExerciseId, scope } where scope is SESSION or PLAN.
    */
   swapExercise: (id, sessionId, body) =>
     workoutClient.post(`/exercises/${id}/swap`, body, { params: { sessionId } }),
+
+  // ── WP-002 Flexibility Layer ─────────────────────────────────────────────────
 
   /**
    * Swap two days in the weekly schedule.
@@ -284,7 +321,6 @@ export const workoutApi = {
   /**
    * Set the user's preferred weight unit.
    * @param {string} unit - KG or LBS
-   * @returns {object} { unit }
    */
   setWeightUnit: (unit) =>
     workoutClient.put('/users/preferences/weight-unit', { unit }),
