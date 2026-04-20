@@ -16,7 +16,7 @@ import useWorkoutHistory from '../hooks/useWorkoutHistory';
 import HistoryStatsBanner from '../components/history/HistoryStatsBanner';
 import MonthSection from '../components/history/MonthSection';
 
-export default function WorkoutHistoryScreen() {
+export default function WorkoutHistoryScreen({ navigation }) {
   const insets = useSafeAreaInsets();
   const { items, isLoading, error, hasMore, isLoadingMore, loadMore } = useWorkoutHistory();
 
@@ -71,7 +71,14 @@ export default function WorkoutHistoryScreen() {
         keyExtractor={(item) => item.month}
         renderItem={({ item }) => (
           <View style={styles.monthSection}>
-            <MonthSection monthLabel={item.month} entries={item.entries} />
+            <MonthSection
+              monthLabel={item.month}
+              entries={item.entries}
+              onEntryPress={(entry) => navigation.navigate('SessionDetail', {
+                sessionId: entry.sessionId ?? entry.id,
+                sessionName: entry.sessionName ?? entry.workoutName ?? 'Session',
+              })}
+            />
           </View>
         )}
         ListHeaderComponent={

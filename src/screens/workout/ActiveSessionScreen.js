@@ -5,7 +5,7 @@
  * API changes vs hf-ms-workout 8083:
  *  - logSet: field names are now `reps`/`weightKg` (not actualReps/actualWeightKg)
  *  - skipSet: sends body { exerciseId, setNumber } to POST /sessions/{id}/sets/skip
- *  - completeSession: requires body { feedback } — user selects before completing
+ *  - completeSession: sends { feedback } — JUST_RIGHT for full complete, PARTIAL for save partial
  *  - Exercise fields: sets/reps/weightKg/metricType/warmup/cooldown
  *    (no prescribedSets/prescribedReps/prescribedWeightKg/wasSwapped)
  *  - Log fields: reps/weightKg/status/setNumber/durationSeconds
@@ -23,186 +23,43 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
-  Modal,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { colors, gradientColors } from '../../theme/colors';
 import { workoutApi } from '../../api/workoutApi';
 import ExerciseSubstituteSheet from '../../components/workout/ExerciseSubstituteSheet';
+import EndWorkoutSheet from '../../components/session/EndWorkoutSheet';
+import RestTimerModal from '../../components/session/RestTimerModal';
 
-// ─── Feedback options ─────────────────────────────────────────────────────────
+// ─── Draft persistence constants ─────────────────────────────────────────────
 
-const FEEDBACK_OPTIONS = [
-  { value: 'TOO_EASY',   label: 'Too Easy',    icon: 'happy-outline' },
-  { value: 'JUST_RIGHT', label: 'Just Right',  icon: 'thumbs-up-outline' },
-  { value: 'TOO_HARD',   label: 'Too Hard',    icon: 'sad-outline' },
-];
-
-// ─── Feedback Modal ───────────────────────────────────────────────────────────
-
-function FeedbackModal({ visible, onSelect, onDismiss }) {
-  const [selected, setSelected] = useState('JUST_RIGHT');
-
-  return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="slide"
-      onRequestClose={onDismiss}
-    >
-      <View style={modalStyles.backdrop}>
-        <View style={modalStyles.sheet}>
-          <Text style={modalStyles.title}>How was that session?</Text>
-          <Text style={modalStyles.sub}>Your feedback helps adjust future workouts.</Text>
-
-          <View style={modalStyles.optionList}>
-            {FEEDBACK_OPTIONS.map((opt) => {
-              const isSelected = selected === opt.value;
-              return (
-                <TouchableOpacity
-                  key={opt.value}
-                  style={[modalStyles.option, isSelected && modalStyles.optionSelected]}
-                  onPress={() => setSelected(opt.value)}
-                  activeOpacity={0.7}
-                >
-                  <Ionicons
-                    name={opt.icon}
-                    size={22}
-                    color={isSelected ? colors.textAccent : colors.textSecondary}
-                  />
-                  <Text style={[modalStyles.optionLabel, isSelected && modalStyles.optionLabelSelected]}>
-                    {opt.label}
-                  </Text>
-                  {isSelected && (
-                    <Ionicons name="checkmark-circle" size={18} color={colors.textAccent} style={modalStyles.check} />
-                  )}
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-
-          <TouchableOpacity
-            onPress={() => onSelect(selected)}
-            activeOpacity={0.85}
-            style={modalStyles.ctaWrapper}
-          >
-            <LinearGradient
-              colors={gradientColors}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={modalStyles.ctaButton}
-            >
-              <Ionicons name="checkmark-done" size={18} color="#fff" />
-              <Text style={modalStyles.ctaText}>Complete Workout</Text>
-            </LinearGradient>
-          </TouchableOpacity>
-
-          <TouchableOpacity onPress={onDismiss} style={modalStyles.cancelBtn}>
-            <Text style={modalStyles.cancelText}>Cancel</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-    </Modal>
-  );
-}
-
-const modalStyles = StyleSheet.create({
-  backdrop: {
-    flex: 1,
-    backgroundColor: colors.overlay,
-    justifyContent: 'flex-end',
-  },
-  sheet: {
-    backgroundColor: colors.bgCard,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    padding: 24,
-    paddingBottom: 40,
-    gap: 16,
-  },
-  title: {
-    color: colors.textPrimary,
-    fontSize: 20,
-    fontWeight: '800',
-    textAlign: 'center',
-  },
-  sub: {
-    color: colors.textSecondary,
-    fontSize: 13,
-    textAlign: 'center',
-    marginTop: -6,
-  },
-  optionList: {
-    gap: 10,
-  },
-  option: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    padding: 14,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: colors.cardBorder,
-    backgroundColor: colors.bgSecondary,
-  },
-  optionSelected: {
-    borderColor: `${colors.textAccent}60`,
-    backgroundColor: `${colors.textAccent}10`,
-  },
-  optionLabel: {
-    flex: 1,
-    color: colors.textSecondary,
-    fontSize: 15,
-    fontWeight: '500',
-  },
-  optionLabelSelected: {
-    color: colors.textPrimary,
-    fontWeight: '600',
-  },
-  check: {
-    marginLeft: 'auto',
-  },
-  ctaWrapper: {
-    borderRadius: 16,
-    overflow: 'hidden',
-    marginTop: 4,
-  },
-  ctaButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 16,
-    borderRadius: 16,
-  },
-  ctaText: {
-    color: '#fff',
-    fontSize: 17,
-    fontWeight: '700',
-  },
-  cancelBtn: {
-    alignItems: 'center',
-    paddingVertical: 10,
-  },
-  cancelText: {
-    color: colors.textSecondary,
-    fontSize: 14,
-  },
-});
+const DRAFT_KEY_PREFIX = 'habfitt:session_draft:';
+const DRAFT_TTL_MS = 24 * 60 * 60 * 1000;
 
 // ─── Set Row ──────────────────────────────────────────────────────────────────
 
-function SetRow({ set, exerciseId, sessionExerciseId, sessionId, ensureStarted, prescribedReps, prescribedWeight, onLogged }) {
-  // Initialise from the new field names: reps / weightKg
+function SetRow({ set, exerciseId, sessionExerciseId, sessionId, ensureStarted, prescribedReps, prescribedWeight, onLogged, onError }) {
+  // Initialise from: set.weightKg → prescribedWeight → ''
   const [reps, setReps]     = useState(set.reps != null ? String(set.reps) : '');
-  const [weight, setWeight] = useState(set.weightKg != null ? String(set.weightKg) : '');
+  const [weight, setWeight] = useState(
+    set.weightKg != null
+      ? String(set.weightKg)
+      : prescribedWeight != null
+        ? String(prescribedWeight)
+        : '',
+  );
   const [saving, setSaving] = useState(false);
 
   const isDone = set.status === 'COMPLETED' || set.status === 'SKIPPED';
 
   const handleLog = async () => {
+    if (!exerciseId) {
+      if (__DEV__) console.warn('[SetRow] exerciseId missing');
+      return;
+    }
     if (!reps || saving) return;
     setSaving(true);
     try {
@@ -218,6 +75,7 @@ function SetRow({ set, exerciseId, sessionExerciseId, sessionId, ensureStarted, 
       onLogged(data);
     } catch (e) {
       if (__DEV__) console.warn('[ActiveSession] logSet failed:', e.response?.status, e.message);
+      onError?.('Could not log set. Please try again.');
     } finally {
       setSaving(false);
     }
@@ -235,6 +93,7 @@ function SetRow({ set, exerciseId, sessionExerciseId, sessionId, ensureStarted, 
       onLogged({ ...set, status: 'SKIPPED' });
     } catch (e) {
       if (__DEV__) console.warn('[ActiveSession] skipSet failed:', e.response?.status, e.message);
+      onError?.('Could not skip set. Please try again.');
     } finally {
       setSaving(false);
     }
@@ -310,18 +169,22 @@ function SetRow({ set, exerciseId, sessionExerciseId, sessionId, ensureStarted, 
 
 // ─── Exercise Card ────────────────────────────────────────────────────────────
 
-function ExerciseCard({ exercise, sessionId, ensureStarted, onSetLogged, onSwapPress }) {
+function ExerciseCard({ exercise, sessionId, ensureStarted, onSetLogged, onSwapPress, onSetError }) {
   // API contract (from GET /sessions/{id}/detail):
   //   exerciseId         — catalogue reference ID (used in logSet/skipSet payloads)
   //   sessionExerciseId  — this session's exercise row ID (used as React key + state match)
   const prescribedSets   = exercise.sets ?? 0;
   const prescribedReps   = exercise.reps ?? null;
-  const prescribedWeight = exercise.weightKg ?? null;
 
   const completedSets = exercise.logs?.filter(
     (l) => l.status === 'COMPLETED' || l.status === 'SKIPPED',
   ).length ?? 0;
   const allDone = completedSets >= prescribedSets;
+
+  // Derive the last logged weight from prior COMPLETED logs for this exercise
+  const lastLoggedWeight = exercise.logs
+    ?.filter(l => l.status === 'COMPLETED' && l.weightKg != null)
+    ?.slice(-1)[0]?.weightKg ?? null;
 
   // Build set list from logs + fill remaining prescribed sets
   const setList = [];
@@ -339,10 +202,10 @@ function ExerciseCard({ exercise, sessionId, ensureStarted, onSetLogged, onSwapP
 
   // Build a readable meta line from available fields
   const metaParts = [];
-  if (prescribedSets)   metaParts.push(`${prescribedSets} sets`);
-  if (prescribedReps)   metaParts.push(`× ${prescribedReps} reps`);
-  if (prescribedWeight) metaParts.push(`@ ${prescribedWeight} kg`);
-  if (exercise.restSeconds) metaParts.push(`${exercise.restSeconds}s rest`);
+  if (prescribedSets)           metaParts.push(`${prescribedSets} sets`);
+  if (prescribedReps)           metaParts.push(`× ${prescribedReps} reps`);
+  if (exercise.weightKg)        metaParts.push(`@ ${exercise.weightKg} kg`);
+  if (exercise.restSeconds)     metaParts.push(`${exercise.restSeconds}s rest`);
 
   // Warmup / cooldown badges
   const isWarmup  = exercise.warmup;
@@ -395,8 +258,9 @@ function ExerciseCard({ exercise, sessionId, ensureStarted, onSetLogged, onSwapP
           sessionId={sessionId}
           ensureStarted={ensureStarted}
           prescribedReps={prescribedReps}
-          prescribedWeight={prescribedWeight}
+          prescribedWeight={lastLoggedWeight ?? exercise.weightKg ?? null}
           onLogged={(logged) => onSetLogged(exercise.sessionExerciseId, set.setNumber, logged)}
+          onError={onSetError}
         />
       ))}
     </View>
@@ -409,11 +273,19 @@ export default function ActiveSessionScreen({ route, navigation }) {
   const { session: initialSession, hasStarted: initialHasStarted = false } = route.params;
   const [session, setSession]         = useState(initialSession);
   const [completing, setCompleting]   = useState(false);
-  const [showFeedback, setShowFeedback] = useState(false);
+  const [showEndSheet, setShowEndSheet] = useState(false);
 
   const [substituteTarget, setSubstituteTarget] = useState(null);
   // { sessionExerciseId, exerciseId, exerciseName }
   const [inlineError, setInlineError] = useState(null);
+
+  // Rest timer state
+  const [restTimer, setRestTimer] = useState({ visible: false, seconds: 60, nextExercise: null });
+
+  // sessionRef always tracks the latest session value so callbacks outside
+  // the state updater (e.g. handleSetLogged rest-timer logic) read fresh state.
+  const sessionRef = useRef(session);
+  useEffect(() => { sessionRef.current = session; }, [session]);
 
   // Lazy-start state. We only POST /sessions/{id}/start on the FIRST log/skip —
   // not on screen mount — so the user can open a day for preview and back out
@@ -424,11 +296,95 @@ export default function ActiveSessionScreen({ route, navigation }) {
   const startPromiseRef = useRef(null);
   const [hasStarted, setHasStarted] = useState(initialHasStarted);
 
+  // Elapsed timer
+  const sessionStartTimeRef = useRef(null);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+
+  // ─── Draft save ────────────────────────────────────────────────────────────
+
+  const saveDraft = useCallback(async () => {
+    if (!sessionRef.current?.sessionId) return;
+    const draft = {
+      sessionId:      sessionRef.current.sessionId,
+      exercises:      sessionRef.current.exercises,
+      elapsedSeconds: elapsedSeconds,
+      hasStarted:     hasStartedRef.current ?? false,
+      savedAt:        Date.now(),
+    };
+    try {
+      await AsyncStorage.setItem(
+        DRAFT_KEY_PREFIX + sessionRef.current.sessionId,
+        JSON.stringify(draft),
+      );
+    } catch (e) {
+      if (__DEV__) console.warn('[ActiveSession] saveDraft failed:', e.message);
+    }
+  }, [elapsedSeconds]); // elapsedSeconds is captured at call time via closure
+
+  // ─── Draft restore on mount ────────────────────────────────────────────────
+
+  useEffect(() => {
+    const initialSessionId = route.params?.session?.sessionId;
+    if (!initialSessionId) return;
+    (async () => {
+      try {
+        const raw = await AsyncStorage.getItem(DRAFT_KEY_PREFIX + initialSessionId);
+        if (!raw) return;
+        const draft = JSON.parse(raw);
+        if (Date.now() - draft.savedAt > DRAFT_TTL_MS) {
+          await AsyncStorage.removeItem(DRAFT_KEY_PREFIX + initialSessionId);
+          return;
+        }
+        if (draft.exercises?.length) {
+          setSession(prev => ({ ...prev, exercises: draft.exercises }));
+        }
+        if (draft.elapsedSeconds > 0) {
+          setElapsedSeconds(draft.elapsedSeconds);
+          sessionStartTimeRef.current = Date.now() - draft.elapsedSeconds * 1000;
+        }
+        if (draft.hasStarted) {
+          setHasStarted(true);
+          hasStartedRef.current = true;
+        }
+      } catch (e) {
+        if (__DEV__) console.warn('[ActiveSession] restoreDraft failed:', e.message);
+      }
+    })();
+  }, []); // mount only
+
+  // ─── beforeRemove — save draft, do NOT block navigation ───────────────────
+
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('beforeRemove', () => {
+      saveDraft(); // fire and forget — do NOT call e.preventDefault()
+    });
+    return unsubscribe;
+  }, [navigation, saveDraft]);
+
+  // ─── Header back press ────────────────────────────────────────────────────
+
+  const handleBackPress = useCallback(() => {
+    saveDraft();
+    navigation.goBack();
+  }, [saveDraft, navigation]);
+
   useEffect(() => {
     if (!inlineError) return;
     const t = setTimeout(() => setInlineError(null), 4000);
     return () => clearTimeout(t);
   }, [inlineError]);
+
+  // Start elapsed timer when session starts
+  useEffect(() => {
+    if (!hasStarted) return;
+    if (!sessionStartTimeRef.current) {
+      sessionStartTimeRef.current = Date.now();
+    }
+    const interval = setInterval(() => {
+      setElapsedSeconds(Math.floor((Date.now() - sessionStartTimeRef.current) / 1000));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [hasStarted]);
 
   const ensureStarted = useCallback(async () => {
     if (hasStartedRef.current) return;
@@ -455,19 +411,45 @@ export default function ActiveSessionScreen({ route, navigation }) {
         return { ...ex, logs: [...logs, loggedSet] };
       }),
     }));
-  }, []);
+
+    // Rest timer triggered here — outside the state updater — using sessionRef
+    if (loggedSet.status === 'COMPLETED') {
+      const currentSession = sessionRef.current;
+      const exercise = currentSession.exercises?.find(
+        (e) => e.sessionExerciseId === sessionExerciseId,
+      );
+      const restSeconds = exercise?.restSeconds ?? 0;
+      if (restSeconds > 0) {
+        const currentIdx = currentSession.exercises?.findIndex(
+          (e) => e.sessionExerciseId === sessionExerciseId,
+        ) ?? -1;
+        const nextEx = currentIdx >= 0
+          ? currentSession.exercises.slice(currentIdx + 1).find((e) => {
+              const done = (e.logs ?? []).filter(
+                (l) => l.status === 'COMPLETED' || l.status === 'SKIPPED',
+              ).length;
+              return done < (e.sets ?? 0);
+            }) ?? null
+          : null;
+        setRestTimer({ visible: true, seconds: restSeconds, nextExercise: nextEx });
+      }
+    }
+  }, []); // no deps — reads from sessionRef
 
   const handleSubstitute = useCallback(
     async (sesExId, newExId, newExName, scope) => {
-      const snapshot = session;
-      setSession(prev => ({
-        ...prev,
-        exercises: (prev.exercises ?? []).map(ex =>
-          ex.sessionExerciseId !== sesExId
-            ? ex
-            : { ...ex, exerciseId: newExId, name: newExName, logs: [] },
-        ),
-      }));
+      let snapshot;
+      setSession(prev => {
+        snapshot = prev;
+        return {
+          ...prev,
+          exercises: (prev.exercises ?? []).map(ex =>
+            ex.sessionExerciseId !== sesExId
+              ? ex
+              : { ...ex, exerciseId: newExId, name: newExName, logs: [] },
+          ),
+        };
+      });
       setSubstituteTarget(null);
       try {
         await workoutApi.substituteExercise(session.sessionId, sesExId, {
@@ -475,11 +457,11 @@ export default function ActiveSessionScreen({ route, navigation }) {
           scope,
         });
       } catch {
-        setSession(snapshot);
+        if (snapshot !== undefined) setSession(snapshot);
         setInlineError('Substitution failed. Please try again.');
       }
     },
-    [session],
+    [session.sessionId],
   );
 
   const completedExercises = session.exercises?.filter((ex) => {
@@ -491,44 +473,70 @@ export default function ActiveSessionScreen({ route, navigation }) {
   }).length ?? 0;
   const totalExercises = session.exercises?.length ?? 0;
 
-  // User taps Complete → show feedback sheet first
-  const handleCompletePress = () => {
-    setShowFeedback(true);
-  };
+  // Total sets completed — passed to EndWorkoutSheet
+  const totalSetsCompleted = session.exercises?.reduce((sum, ex) => {
+    return sum + (ex.logs?.filter(l => l.status === 'COMPLETED' || l.status === 'SKIPPED').length ?? 0);
+  }, 0) ?? 0;
 
-  // After feedback chosen → call API with feedback payload
-  const handleFeedbackSelected = async (feedback) => {
-    setShowFeedback(false);
-    // If the session was never started (no sets logged), there's nothing to
-    // complete on the backend — just go back.
+  // Complete Workout — completes the session with JUST_RIGHT feedback
+  const handleCompletePress = async () => {
     if (!hasStartedRef.current) {
+      // Session never started — just go back
       navigation.goBack();
       return;
     }
     setCompleting(true);
     try {
-      // New: completeSession(sessionId, feedback) — sends { feedback } in body
-      const { data: completed } = await workoutApi.completeSession(session.sessionId, feedback);
-      navigation.replace('WorkoutSummary', { session: completed, feedback });
+      const { data: completed } = await workoutApi.completeSession(session.sessionId, 'JUST_RIGHT');
+      AsyncStorage.removeItem(DRAFT_KEY_PREFIX + session.sessionId).catch(() => {});
+      navigation.replace('WorkoutSummary', { session: completed, sessionData: session });
     } catch (e) {
       if (__DEV__) console.warn('[ActiveSession] complete failed:', e.response?.status, e.message);
+      setInlineError('Could not complete workout. Please try again.');
     } finally {
       setCompleting(false);
     }
   };
 
-  const handleAbandon = async () => {
-    // Only abandon on the backend if the session was actually started.
-    // If the user just tapped into a day and bailed, there's no backend state.
+  // End Workout button in header → open EndWorkoutSheet
+  const handleEndWorkout = () => {
+    setShowEndSheet(true);
+  };
+
+  // Save workout and navigate to summary
+  const handleSavePartial = async () => {
     if (!hasStartedRef.current) {
+      setShowEndSheet(false);
+      navigation.goBack();
+      return;
+    }
+    setCompleting(true);
+    try {
+      const { data: completed } = await workoutApi.completeSession(session.sessionId, 'PARTIAL');
+      AsyncStorage.removeItem(DRAFT_KEY_PREFIX + session.sessionId).catch(() => {});
+      navigation.replace('WorkoutSummary', { session: completed, sessionData: session });
+    } catch (e) {
+      if (__DEV__) console.warn('[ActiveSession] savePartial failed:', e.response?.status, e.message);
+      setShowEndSheet(false);
+      setInlineError('Could not save workout. Please try again.');
+    } finally {
+      setCompleting(false);
+    }
+  };
+
+  // Discard — abandon the session entirely and go back
+  const handleDiscard = async () => {
+    if (!hasStartedRef.current) {
+      setShowEndSheet(false);
       navigation.goBack();
       return;
     }
     try {
       await workoutApi.abandonSession(session.sessionId);
     } catch (e) {
-      if (__DEV__) console.warn('[ActiveSession] abandon failed:', e.response?.status, e.message);
+      if (__DEV__) console.warn('[ActiveSession] discard failed:', e.response?.status, e.message);
     } finally {
+      await AsyncStorage.removeItem(DRAFT_KEY_PREFIX + session.sessionId).catch(() => {});
       navigation.goBack();
     }
   };
@@ -541,6 +549,14 @@ export default function ActiveSessionScreen({ route, navigation }) {
       >
         {/* Header */}
         <View style={styles.header}>
+          {/* Back button — saves draft and goes back */}
+          <TouchableOpacity
+            onPress={handleBackPress}
+            style={styles.headerBackBtn}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name="chevron-back" size={24} color={colors.textPrimary} />
+          </TouchableOpacity>
           <View style={styles.headerText}>
             <Text style={styles.sessionName} numberOfLines={1}>
               {session.sessionName ?? 'Workout'}
@@ -549,8 +565,8 @@ export default function ActiveSessionScreen({ route, navigation }) {
               {completedExercises} / {totalExercises} exercises done
             </Text>
           </View>
-          <TouchableOpacity onPress={handleAbandon} style={styles.abandonBtn}>
-            <Text style={styles.abandonText}>Abandon</Text>
+          <TouchableOpacity onPress={handleEndWorkout} style={styles.endWorkoutBtn}>
+            <Text style={styles.endWorkoutText}>End Workout</Text>
           </TouchableOpacity>
         </View>
 
@@ -594,6 +610,7 @@ export default function ActiveSessionScreen({ route, navigation }) {
                 exerciseId: exercise.exerciseId,
                 exerciseName: exercise.name,
               })}
+              onSetError={(msg) => setInlineError(msg)}
             />
           ))}
           <View style={{ height: 100 }} />
@@ -623,23 +640,26 @@ export default function ActiveSessionScreen({ route, navigation }) {
               )}
             </LinearGradient>
           </TouchableOpacity>
-
-          <TouchableOpacity
-            onPress={handleAbandon}
-            disabled={completing}
-            style={styles.cancelButton}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.cancelText}>Cancel</Text>
-          </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
 
-      {/* Feedback sheet — shown before completing */}
-      <FeedbackModal
-        visible={showFeedback}
-        onSelect={handleFeedbackSelected}
-        onDismiss={() => setShowFeedback(false)}
+      {/* End workout sheet — shown when user taps End Workout */}
+      <EndWorkoutSheet
+        visible={showEndSheet}
+        elapsedSeconds={elapsedSeconds}
+        completedSets={totalSetsCompleted}
+        onSavePartial={handleSavePartial}
+        onDiscard={handleDiscard}
+        onDismiss={() => setShowEndSheet(false)}
+      />
+
+      {/* Rest timer — shown after a completed set with restSeconds */}
+      <RestTimerModal
+        visible={restTimer.visible}
+        defaultSeconds={restTimer.seconds}
+        nextExercise={restTimer.nextExercise}
+        onSkip={() => setRestTimer(r => ({ ...r, visible: false }))}
+        onComplete={() => setRestTimer(r => ({ ...r, visible: false }))}
       />
 
       {/* Exercise substitute sheet */}
@@ -674,6 +694,10 @@ const styles = StyleSheet.create({
     flex: 1,
     marginRight: 12,
   },
+  headerBackBtn: {
+    padding: 4,
+    marginRight: 8,
+  },
   sessionName: {
     color: colors.textPrimary,
     fontSize: 20,
@@ -684,14 +708,14 @@ const styles = StyleSheet.create({
     fontSize: 13,
     marginTop: 2,
   },
-  abandonBtn: {
+  endWorkoutBtn: {
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: `${colors.error}50`,
   },
-  abandonText: {
+  endWorkoutText: {
     color: colors.error,
     fontSize: 13,
     fontWeight: '600',
@@ -891,16 +915,5 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 17,
     fontWeight: '700',
-  },
-  cancelButton: {
-    marginTop: 10,
-    paddingVertical: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  cancelText: {
-    color: colors.textSecondary,
-    fontSize: 15,
-    fontWeight: '600',
   },
 });

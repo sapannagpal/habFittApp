@@ -4,7 +4,7 @@
  * Renders state-driven content: WORKOUT / REST_DAY / NO_PLAN / COMPLETED.
  * Also integrates WorkoutContext for local active-plan state.
  */
-import React, { useCallback } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   ScrollView,
   RefreshControl,
@@ -30,6 +30,7 @@ import CoachNoteCard         from '../components/dashboard/CoachNoteCard';
 import ShimmerBox            from '../components/common/ShimmerBox';
 import TodayWorkoutHeroCard  from '../components/dashboard/TodayWorkoutHeroCard';
 import MissedSessionsCard    from '../components/dashboard/MissedSessionsCard';
+import { workoutApi }        from '../api/workoutApi';
 
 // ─── Loading Skeleton ─────────────────────────────────────────────────────────
 
@@ -69,6 +70,26 @@ function MainCard({
   activePlan,
   navigation,
 }) {
+  const [startingSession, setStartingSession] = useState(false);
+
+  const handleStartSession = async () => {
+    if (startingSession || !todaySession?.id) return;
+    setStartingSession(true);
+    try {
+      const { data: session } = await workoutApi.getSessionDetail(todaySession.id);
+      const hasStarted = session.status === 'IN_PROGRESS';
+      navigation.navigate('Workouts', {
+        screen: 'ActiveSession',
+        params: { session, hasStarted },
+      });
+    } catch (e) {
+      // Silent fail — user stays on dashboard and can retry by tapping again
+      if (__DEV__) console.warn('[Dashboard] getSessionDetail failed:', e.message);
+    } finally {
+      setStartingSession(false);
+    }
+  };
+
   // If there's an active plan, use WorkoutContext state
   if (activePlan) {
     if (dashboardState === 'COMPLETED_TODAY') {
@@ -86,9 +107,8 @@ function MainCard({
         <TodayWorkoutHeroCard
           session={todaySession}
           planName={activePlan.name}
-          onStart={() => navigation.navigate('ActiveSession', {
-            sessionId: todaySession.id,
-          })}
+          onStart={handleStartSession}
+          disabled={startingSession}
         />
       );
     }

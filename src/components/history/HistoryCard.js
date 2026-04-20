@@ -11,13 +11,13 @@ import { colors } from '../../theme/colors';
 import { GradientBadge } from '../common/GradientBadge';
 import { formatDuration } from '../../utils/workoutUtils';
 
-export default function HistoryCard({ entry }) {
+export default function HistoryCard({ entry, onPress }) {
   const date = new Date(entry.date);
   const day = date.getDate();
   const month = date.toLocaleDateString('en-US', { month: 'short' });
 
   return (
-    <TouchableOpacity style={styles.card} activeOpacity={0.8}>
+    <TouchableOpacity style={styles.card} activeOpacity={0.8} onPress={onPress}>
       {/* Date column */}
       <View style={styles.dateCol}>
         <Text style={styles.day}>{day}</Text>

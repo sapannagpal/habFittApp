@@ -7,6 +7,7 @@
 import React from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import WorkoutHistoryScreen from '../screens/WorkoutHistoryScreen';
+import SessionDetailScreen from '../screens/workout/SessionDetailScreen';
 import { colors } from '../theme/colors';
 
 const Stack = createNativeStackNavigator();
@@ -24,6 +25,11 @@ export default function HistoryStack() {
       <Stack.Screen
         name="WorkoutHistory"
         component={WorkoutHistoryScreen}
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="SessionDetail"
+        component={SessionDetailScreen}
         options={{ headerShown: false }}
       />
     </Stack.Navigator>

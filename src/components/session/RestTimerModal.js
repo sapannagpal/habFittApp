@@ -33,6 +33,9 @@ export default function RestTimerModal({
   const [secondsLeft, setSecondsLeft] = useState(defaultSeconds);
   const intervalRef = useRef(null);
 
+  const onCompleteRef = useRef(onComplete);
+  useEffect(() => { onCompleteRef.current = onComplete; }, [onComplete]);
+
   // Start or reset the countdown whenever the modal becomes visible
   useEffect(() => {
     if (visible) {
@@ -42,7 +45,7 @@ export default function RestTimerModal({
           if (prev <= 1) {
             clearInterval(intervalRef.current);
             // Call onComplete after this tick
-            setTimeout(onComplete, 0);
+            setTimeout(() => onCompleteRef.current(), 0);
             return 0;
           }
           return prev - 1;
@@ -98,17 +101,17 @@ export default function RestTimerModal({
             <View style={styles.adjustRow}>
               <TouchableOpacity
                 style={styles.adjustBtn}
-                onPress={() => handleAdjust(-10)}
+                onPress={() => handleAdjust(-15)}
                 activeOpacity={0.7}
               >
-                <Text style={styles.adjustText}>-10</Text>
+                <Text style={styles.adjustText}>-15</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.adjustBtn}
-                onPress={() => handleAdjust(10)}
+                onPress={() => handleAdjust(15)}
                 activeOpacity={0.7}
               >
-                <Text style={styles.adjustText}>+10</Text>
+                <Text style={styles.adjustText}>+15</Text>
               </TouchableOpacity>
             </View>
 

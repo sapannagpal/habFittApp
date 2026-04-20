@@ -5,8 +5,12 @@
  *   visible         {boolean}   — controls sheet visibility
  *   elapsedSeconds  {number}    — session duration so far in seconds
  *   completedSets   {number}    — number of sets completed so far
- *   onFinishEarly   {function}  — user confirms ending early
- *   onKeepGoing     {function}  — user dismisses and continues
+ *   onSavePartial   {function}  — user saves the workout (primary CTA)
+ *   onDiscard       {function}  — user discards the workout entirely
+ *
+ * Backdrop tap / onDismiss: calls the onDismiss prop so the parent can clear
+ * its visible state and the sheet stays closed after the animation completes.
+ * onKeepGoing prop removed — there is no Keep Going button.
  */
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
@@ -19,11 +23,12 @@ export default function EndWorkoutSheet({
   visible,
   elapsedSeconds,
   completedSets,
-  onFinishEarly,
-  onKeepGoing,
+  onSavePartial,
+  onDiscard,
+  onDismiss,
 }) {
   return (
-    <BottomSheet visible={visible} onDismiss={onKeepGoing}>
+    <BottomSheet visible={visible} onDismiss={onDismiss ?? (() => {})}>
       <View style={styles.content}>
         <Text style={styles.title}>End Workout?</Text>
 
@@ -39,16 +44,16 @@ export default function EndWorkoutSheet({
           </View>
         </View>
 
-        {/* Keep going — primary CTA */}
+        {/* Save Workout — primary gradient CTA */}
         <GradientButton
-          label="Keep Going"
-          onPress={onKeepGoing}
+          label="Save Workout"
+          onPress={onSavePartial}
           style={styles.btn}
         />
 
-        {/* Finish early — destructive secondary action */}
-        <TouchableOpacity style={styles.finishBtn} onPress={onFinishEarly}>
-          <Text style={styles.finishText}>Finish Early</Text>
+        {/* Discard — destructive text action */}
+        <TouchableOpacity style={styles.discardBtn} onPress={onDiscard}>
+          <Text style={styles.discardText}>Discard Workout</Text>
         </TouchableOpacity>
       </View>
     </BottomSheet>
@@ -90,11 +95,11 @@ const styles = StyleSheet.create({
   btn: {
     marginBottom: 12,
   },
-  finishBtn: {
+  discardBtn: {
     alignItems: 'center',
     paddingVertical: 12,
   },
-  finishText: {
+  discardText: {
     color: colors.error,
     fontSize: 15,
     fontWeight: '600',

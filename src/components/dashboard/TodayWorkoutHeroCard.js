@@ -14,7 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../../theme/colors';
 import GradientButton from '../common/GradientButton';
 
-export default function TodayWorkoutHeroCard({ session, planName, onStart }) {
+export default function TodayWorkoutHeroCard({ session, planName, onStart, disabled }) {
   return (
     <View style={styles.card}>
       {/* Top accent strip */}
@@ -53,8 +53,9 @@ export default function TodayWorkoutHeroCard({ session, planName, onStart }) {
 
         {/* CTA */}
         <GradientButton
-          label="Start Workout"
+          label={disabled ? 'Opening…' : 'Start Workout'}
           onPress={onStart}
+          disabled={disabled}
           style={styles.ctaBtn}
         />
       </View>

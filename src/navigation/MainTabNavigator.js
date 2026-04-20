@@ -6,7 +6,7 @@ import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
 import DashboardScreen from '../screens/DashboardScreen';
-import WorkoutsStack   from './WorkoutsStack';
+import WorkoutsStack   from './WorkoutsStackNavigator';
 import HistoryStack    from './HistoryStack';
 import ProfileScreen   from '../screens/ProfileScreen';
 import { colors } from '../theme/colors';
