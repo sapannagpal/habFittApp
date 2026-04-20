@@ -147,10 +147,10 @@ export const workoutApi = {
 
   /**
    * Abandon the user's currently active plan.
-   * @returns {object} { planId, status }
+   * Backend: DELETE /plans/active → 204 No Content
    */
   abandonActivePlan: () =>
-    workoutClient.post('/plans/active/abandon'),
+    workoutClient.delete('/plans/active'),
 
   // ── Session Lifecycle ────────────────────────────────────────────────────────
 

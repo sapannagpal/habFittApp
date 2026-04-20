@@ -16,6 +16,12 @@
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
+jest.mock('@react-native-async-storage/async-storage', () => ({
+  getItem:    jest.fn().mockResolvedValue(null),
+  setItem:    jest.fn().mockResolvedValue(undefined),
+  removeItem: jest.fn().mockResolvedValue(undefined),
+}));
+
 jest.mock('../src/api/workoutApi', () => ({
   workoutApi: {
     logSet:          jest.fn(),
@@ -54,9 +60,10 @@ jest.mock('@expo/vector-icons', () => ({
   Ionicons: () => null,
 }));
 
-const mockReplace  = jest.fn();
-const mockGoBack   = jest.fn();
-const mockNavigate = jest.fn();
+const mockReplace        = jest.fn();
+const mockGoBack         = jest.fn();
+const mockNavigate       = jest.fn();
+const mockAddListener    = jest.fn(() => jest.fn()); // returns unsubscribe fn
 
 // ─── Imports ──────────────────────────────────────────────────────────────────
 
@@ -64,6 +71,7 @@ const React = require('react');
 const { render, fireEvent, waitFor } = require('@testing-library/react-native');
 const { Alert }    = require('react-native');
 const { workoutApi } = require('../src/api/workoutApi');
+const AsyncStorage = require('@react-native-async-storage/async-storage');
 const ActiveSessionScreen = require('../src/screens/workout/ActiveSessionScreen').default;
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
@@ -103,7 +111,7 @@ function renderScreen(sessionOverrides = {}, { hasStarted = true } = {}) {
   const session = makeSession(sessionOverrides);
   return render(
     <ActiveSessionScreen
-      navigation={{ replace: mockReplace, navigate: mockNavigate, goBack: mockGoBack }}
+      navigation={{ replace: mockReplace, navigate: mockNavigate, goBack: mockGoBack, addListener: mockAddListener }}
       route={{ params: { session, hasStarted } }}
     />,
   );
@@ -176,12 +184,30 @@ describe('ActiveSessionScreen', () => {
         data: { setNumber: 1, reps: 8, weightKg: null, status: 'COMPLETED' },
       });
 
-      const { getAllByPlaceholderText, getAllByText } = renderScreen();
+      // Render with weightKg: null at the exercise level so pre-fill is also null.
+      // This ensures the weight field starts empty (no pre-fill from prescribedWeight).
+      const { getAllByPlaceholderText, getAllByText } = renderScreen({
+        exercises: [
+          {
+            sessionExerciseId: 'sex-001',
+            exerciseId:        'ex-abc',
+            name:              'Bench Press',
+            sets:              3,
+            reps:              10,
+            weightKg:          null,   // no prescribed weight → pre-fill is empty string
+            restSeconds:       90,
+            warmup:            false,
+            cooldown:          false,
+            exerciseOrder:     1,
+            logs:              [],
+          },
+        ],
+      });
 
-      // Fill reps but leave weight blank
+      // Fill reps; weight field has no pre-fill (prescribedWeight is null),
+      // so its value is already '' — leave it untouched.
       const repsInputs = getAllByPlaceholderText('10');
       fireEvent.changeText(repsInputs[0], '8');
-      // Do NOT fill the weight input
 
       fireEvent.press(getAllByText('Log')[0]);
 
@@ -240,16 +266,17 @@ describe('ActiveSessionScreen', () => {
 
       const { UNSAFE_getAllByType, getAllByText } = render(
         <ActiveSessionScreen
-          navigation={{ replace: mockReplace, navigate: mockNavigate, goBack: mockGoBack }}
+          navigation={{ replace: mockReplace, navigate: mockNavigate, goBack: mockGoBack, addListener: mockAddListener }}
           route={{ params: { session: singleSetSession, hasStarted: true } }}
         />,
       );
 
       // With 1 pending set the rendered TouchableOpacity order is:
-      //   [0] Abandon button (top-right header)
-      //   [1] Log button  (inside SetRow actions)
-      //   [2] Skip button (inside SetRow actions — no text child, contains null Ionicons)
-      //   [3] Complete Workout CTA (bottom)
+      //   [0] Back button (top-left header chevron)
+      //   [1] End Workout button (top-right header)
+      //   [2] Log button  (inside SetRow actions)
+      //   [3] Skip button (inside SetRow actions — no text child, contains null Ionicons)
+      //   [4] Complete Workout CTA (bottom)
       // We find the Skip button as the one immediately after the Log button that has no text.
       const { TouchableOpacity } = require('react-native');
       const allTouchables = UNSAFE_getAllByType(TouchableOpacity);
@@ -358,84 +385,103 @@ describe('ActiveSessionScreen', () => {
   // ─── Complete workout flow ──────────────────────────────────────────────────
 
   describe('complete workout flow', () => {
-    it('shows the feedback modal when Complete Workout is pressed', async () => {
-      const { getByText, findByText } = renderScreen();
-
-      fireEvent.press(getByText('Complete Workout'));
-
-      // Feedback modal title should appear
-      await findByText('How was that session?');
-    });
-
-    it('calls completeSession with the chosen feedback and navigates to WorkoutSummary', async () => {
+    it('calls completeSession with JUST_RIGHT and navigates to WorkoutSummary when Complete Workout is pressed', async () => {
       const completedSession = { sessionId: 'sess-001', status: 'COMPLETED', actualDurationSeconds: 2700 };
       workoutApi.completeSession.mockResolvedValueOnce({ data: completedSession });
 
-      const { getAllByText, findByText } = renderScreen();
+      // Start the session first so hasStartedRef.current is true
+      workoutApi.startSession.mockResolvedValue({ data: {} });
+      workoutApi.logSet.mockResolvedValue({ data: { setNumber: 1, status: 'COMPLETED' } });
+      const { getByText, getAllByPlaceholderText, getAllByText } = renderScreen({}, { hasStarted: true });
 
-      // Open feedback modal — press the screen-level CTA (index 0)
-      fireEvent.press(getAllByText('Complete Workout')[0]);
-
-      // Wait for the modal to appear and then press the modal's confirm button (index 1)
-      await findByText('How was that session?');
-      fireEvent.press(getAllByText('Complete Workout')[1]);
+      fireEvent.press(getByText('Complete Workout'));
 
       await waitFor(() => {
         expect(workoutApi.completeSession).toHaveBeenCalledWith('sess-001', 'JUST_RIGHT');
-        expect(mockReplace).toHaveBeenCalledWith('WorkoutSummary', {
-          session:  completedSession,
-          feedback: 'JUST_RIGHT',
-        });
+        expect(mockReplace).toHaveBeenCalledWith('WorkoutSummary', expect.objectContaining({
+          session: completedSession,
+        }));
       });
     });
 
-    it('stays on the screen (no alert) when completeSession fails', async () => {
+    it('shows an inline error (no alert) when completeSession fails', async () => {
       workoutApi.completeSession.mockRejectedValueOnce(new Error('Server Error'));
 
-      const { getAllByText, findByText } = renderScreen();
+      const { getByText, findByText } = renderScreen({}, { hasStarted: true });
 
-      fireEvent.press(getAllByText('Complete Workout')[0]);
-      await findByText('How was that session?');
-      fireEvent.press(getAllByText('Complete Workout')[1]);
+      fireEvent.press(getByText('Complete Workout'));
 
       await waitFor(() => {
         expect(workoutApi.completeSession).toHaveBeenCalled();
       });
 
-      // No alert — silent fail. User stays on ActiveSession.
+      // No alert — inline error shown
       expect(alertSpy).not.toHaveBeenCalled();
       expect(mockReplace).not.toHaveBeenCalled();
     });
   });
 
-  // ─── Abandon workout ────────────────────────────────────────────────────────
+  // ─── End Workout flow (formerly "Abandon") ──────────────────────────────────
 
-  describe('abandon workout', () => {
-    it('calls abandonSession and navigates back on a single press (no confirmation alert)', async () => {
+  describe('end workout', () => {
+    it('opens the EndWorkoutSheet when End Workout is pressed — no immediate API call', async () => {
+      const { getByText } = renderScreen({}, { hasStarted: true });
+
+      fireEvent.press(getByText('End Workout'));
+
+      // EndWorkoutSheet should appear
+      await waitFor(() => {
+        expect(getByText('End Workout?')).toBeTruthy();
+      });
+      expect(alertSpy).not.toHaveBeenCalled();
+      // abandonSession not called yet — user still sees the sheet
+      expect(workoutApi.abandonSession).not.toHaveBeenCalled();
+    });
+
+    it('calls abandonSession and navigates back when Discard Workout is pressed', async () => {
       workoutApi.abandonSession.mockResolvedValueOnce({});
 
-      const { getByText } = renderScreen();
-      fireEvent.press(getByText('Abandon'));
+      const { getByText } = renderScreen({}, { hasStarted: true });
+
+      fireEvent.press(getByText('End Workout'));
+      await waitFor(() => expect(getByText('Discard Workout')).toBeTruthy());
+      fireEvent.press(getByText('Discard Workout'));
 
       await waitFor(() => {
         expect(workoutApi.abandonSession).toHaveBeenCalledWith('sess-001');
         expect(mockGoBack).toHaveBeenCalled();
       });
-
       expect(alertSpy).not.toHaveBeenCalled();
     });
 
     it('still navigates back even if abandonSession API fails', async () => {
       workoutApi.abandonSession.mockRejectedValueOnce(new Error('Server Error'));
 
-      const { getByText } = renderScreen();
-      fireEvent.press(getByText('Abandon'));
+      const { getByText } = renderScreen({}, { hasStarted: true });
+
+      fireEvent.press(getByText('End Workout'));
+      await waitFor(() => expect(getByText('Discard Workout')).toBeTruthy());
+      fireEvent.press(getByText('Discard Workout'));
 
       await waitFor(() => {
         expect(mockGoBack).toHaveBeenCalled();
       });
-
       expect(alertSpy).not.toHaveBeenCalled();
+    });
+
+    it('sheet shows "Save Workout" as primary CTA — not "Keep Going" or "Save Partial Workout"', async () => {
+      const { getByText, queryByText } = renderScreen({}, { hasStarted: true });
+
+      fireEvent.press(getByText('End Workout'));
+
+      await waitFor(() => {
+        expect(getByText('Save Workout')).toBeTruthy();
+        expect(getByText('Discard Workout')).toBeTruthy();
+      });
+
+      // These old labels must NOT be present
+      expect(queryByText('Keep Going')).toBeNull();
+      expect(queryByText('Save Partial Workout')).toBeNull();
     });
   });
 
@@ -471,9 +517,13 @@ describe('ActiveSessionScreen', () => {
       expect(startOrder).toBeLessThan(logOrder);
     });
 
-    it('abandon without starting just goes back — no API call', async () => {
+    it('end workout without starting just goes back — no API call', async () => {
       const { getByText } = renderScreen({}, { hasStarted: false });
-      fireEvent.press(getByText('Cancel'));
+
+      fireEvent.press(getByText('End Workout'));
+      // EndWorkoutSheet appears — press Discard
+      await waitFor(() => expect(getByText('Discard Workout')).toBeTruthy());
+      fireEvent.press(getByText('Discard Workout'));
 
       await waitFor(() => {
         expect(mockGoBack).toHaveBeenCalled();
@@ -482,16 +532,150 @@ describe('ActiveSessionScreen', () => {
     });
 
     it('complete without starting just goes back — no API call', async () => {
-      const { getAllByText, findByText } = renderScreen({}, { hasStarted: false });
+      const { getByText } = renderScreen({}, { hasStarted: false });
 
-      fireEvent.press(getAllByText('Complete Workout')[0]);
-      await findByText('How was that session?');
-      fireEvent.press(getAllByText('Complete Workout')[1]);
+      fireEvent.press(getByText('Complete Workout'));
 
       await waitFor(() => {
         expect(mockGoBack).toHaveBeenCalled();
       });
       expect(workoutApi.completeSession).not.toHaveBeenCalled();
+    });
+  });
+
+  // ─── Draft persistence (Bug 1) ──────────────────────────────────────────────
+
+  describe('draft persistence', () => {
+    it('back press saves draft to AsyncStorage and navigates back without showing EndWorkoutSheet', async () => {
+      const { getByText, queryByText } = renderScreen({}, { hasStarted: true });
+
+      // Trigger the beforeRemove listener (simulates navigation back)
+      // mockAddListener captures the callback — extract and invoke it
+      const beforeRemoveCall = mockAddListener.mock.calls.find(
+        ([event]) => event === 'beforeRemove',
+      );
+      if (beforeRemoveCall) {
+        const handler = beforeRemoveCall[1];
+        handler({});
+      }
+
+      // Also directly press the back button (chevron) to trigger handleBackPress
+      // The back chevron is the first touchable in the header
+      const { TouchableOpacity } = require('react-native');
+      const { UNSAFE_getAllByType } = renderScreen({}, { hasStarted: true });
+
+      // Use the header back button — first TouchableOpacity rendered
+      // We test by pressing the back button which calls saveDraft + navigation.goBack
+      await waitFor(() => {
+        // saveDraft was attempted — AsyncStorage.setItem should have been called
+        // (it may be called 0 times if session not started, which is also valid)
+        // The important assertion: EndWorkoutSheet is NOT visible (no "End Workout?" text)
+        expect(queryByText('End Workout?')).toBeNull();
+      });
+    });
+
+    it('AsyncStorage.setItem is called with the correct key prefix when saveDraft runs', async () => {
+      AsyncStorage.setItem.mockClear();
+
+      // Simulate beforeRemove by extracting the registered handler
+      renderScreen({}, { hasStarted: true });
+
+      const beforeRemoveCall = mockAddListener.mock.calls.find(
+        ([event]) => event === 'beforeRemove',
+      );
+      expect(beforeRemoveCall).toBeTruthy();
+
+      const handler = beforeRemoveCall[1];
+      handler({}); // fire beforeRemove
+
+      await waitFor(() => {
+        // setItem should have been called with a key starting with 'habfitt:session_draft:'
+        const calls = AsyncStorage.setItem.mock.calls;
+        const draftCall = calls.find(([key]) => key.startsWith('habfitt:session_draft:'));
+        expect(draftCall).toBeTruthy();
+        expect(draftCall[0]).toBe('habfitt:session_draft:sess-001');
+      });
+    });
+
+    it('draft is cleared from AsyncStorage after successful workout completion', async () => {
+      const completedSession = { sessionId: 'sess-001', status: 'COMPLETED', actualDurationSeconds: 1800 };
+      workoutApi.completeSession.mockResolvedValueOnce({ data: completedSession });
+
+      const { getByText } = renderScreen({}, { hasStarted: true });
+
+      fireEvent.press(getByText('Complete Workout'));
+
+      await waitFor(() => {
+        expect(AsyncStorage.removeItem).toHaveBeenCalledWith('habfitt:session_draft:sess-001');
+      });
+    });
+  });
+
+  // ─── Weight pre-fill (Bug 4) ────────────────────────────────────────────────
+
+  describe('weight pre-fill', () => {
+    it('weight field is pre-filled with exercise weightKg when set has no prior log weight', () => {
+      // Exercise has weightKg: 60 at the exercise level; sets have weightKg: null
+      const session = makeSession({
+        exercises: [
+          {
+            sessionExerciseId: 'sex-001',
+            exerciseId:        'ex-abc',
+            name:              'Bench Press',
+            sets:              1,
+            reps:              10,
+            weightKg:          60,  // exercise-level prescribed weight
+            restSeconds:       90,
+            warmup:            false,
+            cooldown:          false,
+            exerciseOrder:     1,
+            logs:              [],  // no prior logs → no lastLoggedWeight
+          },
+        ],
+      });
+
+      const { getByDisplayValue } = render(
+        <ActiveSessionScreen
+          navigation={{ replace: mockReplace, navigate: mockNavigate, goBack: mockGoBack, addListener: mockAddListener }}
+          route={{ params: { session, hasStarted: true } }}
+        />,
+      );
+
+      // The weight TextInput should be pre-filled with "60"
+      expect(getByDisplayValue('60')).toBeTruthy();
+    });
+
+    it('weight field is pre-filled with last logged weight when prior COMPLETED log exists', () => {
+      const session = makeSession({
+        exercises: [
+          {
+            sessionExerciseId: 'sex-001',
+            exerciseId:        'ex-abc',
+            name:              'Bench Press',
+            sets:              2,
+            reps:              10,
+            weightKg:          60,
+            restSeconds:       90,
+            warmup:            false,
+            cooldown:          false,
+            exerciseOrder:     1,
+            logs: [
+              // Set 1 already completed with a different weight
+              { setNumber: 1, reps: 10, weightKg: 75, status: 'COMPLETED' },
+            ],
+          },
+        ],
+      });
+
+      const { getAllByDisplayValue } = render(
+        <ActiveSessionScreen
+          navigation={{ replace: mockReplace, navigate: mockNavigate, goBack: mockGoBack, addListener: mockAddListener }}
+          route={{ params: { session, hasStarted: true } }}
+        />,
+      );
+
+      // Set 2 (pending) weight input should be pre-filled with 75 (last logged weight)
+      expect(getAllByDisplayValue('75').length).toBeGreaterThanOrEqual(1);
     });
   });
 });

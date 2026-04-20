@@ -20,6 +20,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../../theme/colors';
 import { workoutApi } from '../../api/workoutApi';
+import { useWorkout } from '../../context/WorkoutContext';
 import SwapDaySheet    from '../../components/workout/SwapDaySheet';
 import CombineDaySheet from '../../components/workout/CombineDaySheet';
 
@@ -44,11 +45,28 @@ const numDay = (d) =>
   typeof d === 'number' ? d
     : ({ MONDAY:1,TUESDAY:2,WEDNESDAY:3,THURSDAY:4,FRIDAY:5,SATURDAY:6,SUNDAY:7 }[d] ?? 0);
 
+// Returns the ISO day of week for today: 1=Mon … 7=Sun
+function todayIsoDay() {
+  const d = new Date().getDay(); // 0=Sun … 6=Sat
+  return d === 0 ? 7 : d;
+}
+
+const MONTH_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+function getWeekDateRange(planStartDate, weekNumber) {
+  const start = new Date(planStartDate);
+  start.setDate(start.getDate() + (weekNumber - 1) * 7);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 6);
+  const fmt = (d) => `${MONTH_SHORT[d.getMonth()]} ${d.getDate()}`;
+  return `${fmt(start)} – ${fmt(end)}`;
+}
+
 // ─── Day Card ─────────────────────────────────────────────────────────────────
 
-function DayCard({ day, onPress, onLongPress, onMenuPress }) {
+function DayCard({ day, onPress, onLongPress, onMenuPress, isToday }) {
   const isRest   = day.restDay;
-  const isDone   = day.status === 'COMPLETED';
+  const isDone   = day.status?.toUpperCase() === 'COMPLETED';
   const isActive = day.status === 'IN_PROGRESS';
   const canStart = !isRest && !isDone && day.sessionId;
   const short    = DAY_SHORT[day.dayOfWeek] ?? String(day.dayOfWeek ?? '').slice(0, 3);
@@ -65,6 +83,7 @@ function DayCard({ day, onPress, onLongPress, onMenuPress }) {
         isDone   && styles.dayCardDone,
         isActive && styles.dayCardActive,
         isRest   && styles.dayCardRest,
+        isToday  && styles.dayCardToday,
       ]}
       onPress={() => canStart && onPress(day)}
       onLongPress={() => canStart && onLongPress?.(day)}
@@ -104,6 +123,7 @@ function DayCard({ day, onPress, onLongPress, onMenuPress }) {
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
 export default function WeeklyScheduleScreen({ route, navigation }) {
+  const { clearActivePlan } = useWorkout();
   const { planId, plan } = route.params;
 
   // Start on the plan's current week if provided, otherwise week 1
@@ -112,6 +132,11 @@ export default function WeeklyScheduleScreen({ route, navigation }) {
 
   const [weekNumber, setWeekNumber] = useState(initialWeek);
   const [schedule, setSchedule]     = useState(null);
+
+  const planStart = plan?.createdAt ? new Date(plan.createdAt) : null;
+  const weekLabel = (planStart && !isNaN(planStart.getTime()))
+    ? getWeekDateRange(planStart, weekNumber)
+    : `Week ${weekNumber}`;
   const [loading, setLoading]       = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError]           = useState(null);
@@ -120,6 +145,7 @@ export default function WeeklyScheduleScreen({ route, navigation }) {
   const [swapSource, setSwapSource]       = useState(null);
   const [combineSource, setCombineSource] = useState(null);
   const [inlineError, setInlineError]     = useState(null);
+  const [showMenu, setShowMenu]           = useState(false);
 
   const load = useCallback(
     async (wk, isRefresh = false) => {
@@ -253,10 +279,11 @@ export default function WeeklyScheduleScreen({ route, navigation }) {
   const handleAbandonPlan = async () => {
     try {
       await workoutApi.abandonActivePlan();
+      clearActivePlan();
+      navigation.replace('PlanCatalogue');
     } catch (e) {
       if (__DEV__) console.warn('[WeeklySchedule] abandonPlan failed:', e.response?.status, e.message);
-    } finally {
-      navigation.replace('PlanCatalogue');
+      setInlineError('Could not abandon plan. Please try again.');
     }
   };
 
@@ -290,7 +317,15 @@ export default function WeeklyScheduleScreen({ route, navigation }) {
   return (
     <SafeAreaView style={styles.container}>
       {/* Header */}
-      <View style={styles.header}>
+      <View style={[styles.header, { position: 'relative' }]}>
+        {/* Back button */}
+        <TouchableOpacity
+          onPress={() => navigation.goBack()}
+          style={styles.backBtn}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Ionicons name="chevron-back" size={24} color={colors.textPrimary} />
+        </TouchableOpacity>
         <View style={styles.headerText}>
           {/* programmeName replaces the old templateName field */}
           <Text style={styles.planName} numberOfLines={1}>
@@ -302,12 +337,28 @@ export default function WeeklyScheduleScreen({ route, navigation }) {
             <Text style={styles.headerSub}>Active Plan</Text>
           )}
         </View>
-        <TouchableOpacity
-          onPress={handleAbandonPlan}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-        >
-          <Ionicons name="ellipsis-horizontal" size={22} color={colors.textSecondary} />
+        <TouchableOpacity onPress={() => setShowMenu(m => !m)} style={styles.menuBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+          <Ionicons name="ellipsis-vertical" size={20} color={colors.textSecondary} />
         </TouchableOpacity>
+        {showMenu && (
+          <View style={styles.dropdown}>
+            <TouchableOpacity
+              style={styles.dropdownItem}
+              onPress={() => { setShowMenu(false); navigation.navigate('PlanDetail'); }}
+            >
+              <Ionicons name="document-text-outline" size={16} color={colors.textPrimary} />
+              <Text style={styles.dropdownItemText}>Plan Details</Text>
+            </TouchableOpacity>
+            <View style={styles.dropdownDivider} />
+            <TouchableOpacity
+              style={styles.dropdownItem}
+              onPress={() => { setShowMenu(false); handleAbandonPlan(); }}
+            >
+              <Ionicons name="trash-outline" size={16} color={colors.error} />
+              <Text style={[styles.dropdownItemText, { color: colors.error }]}>Abandon Plan</Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </View>
 
       {/* Week navigation */}
@@ -323,7 +374,7 @@ export default function WeeklyScheduleScreen({ route, navigation }) {
             color={weekNumber <= 1 ? colors.textSecondary : colors.textPrimary}
           />
         </TouchableOpacity>
-        <Text style={styles.weekLabel}>Week {weekNumber}</Text>
+        <Text style={styles.weekLabel}>{weekLabel}</Text>
         <TouchableOpacity
           onPress={() => changeWeek(1)}
           disabled={totalWeeks != null && weekNumber >= totalWeeks}
@@ -360,6 +411,7 @@ export default function WeeklyScheduleScreen({ route, navigation }) {
             />
           }
           showsVerticalScrollIndicator={false}
+          onScrollBeginDrag={() => setShowMenu(false)}
         >
           {inlineError && (
             <View style={styles.inlineErrorBanner}>
@@ -372,6 +424,12 @@ export default function WeeklyScheduleScreen({ route, navigation }) {
             <View style={styles.errorBox}>
               <Ionicons name="alert-circle-outline" size={32} color={colors.textSecondary} />
               <Text style={styles.errorText}>{error}</Text>
+              <TouchableOpacity
+                style={styles.retryBtn}
+                onPress={() => load(weekNumber)}
+              >
+                <Text style={styles.retryText}>Retry</Text>
+              </TouchableOpacity>
             </View>
           ) : days.length === 0 ? (
             <View style={styles.errorBox}>
@@ -385,6 +443,7 @@ export default function WeeklyScheduleScreen({ route, navigation }) {
                 onPress={handleDayPress}
                 onLongPress={(d) => setSwapSource(numDay(d.dayOfWeek))}
                 onMenuPress={(d) => setCombineSource(numDay(d.dayOfWeek))}
+                isToday={numDay(day.dayOfWeek) === todayIsoDay()}
               />
             ))
           )}
@@ -440,6 +499,10 @@ const styles = StyleSheet.create({
     flex: 1,
     marginRight: 12,
   },
+  backBtn: {
+    padding: 4,
+    marginRight: 4,
+  },
   planName: {
     color: colors.textPrimary,
     fontSize: 22,
@@ -470,7 +533,7 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     fontSize: 15,
     fontWeight: '600',
-    minWidth: 70,
+    minWidth: 130,
     textAlign: 'center',
   },
   list: {
@@ -574,5 +637,59 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '500',
     flex: 1,
+  },
+  dayCardToday: {
+    borderLeftWidth: 3,
+    borderLeftColor: colors.textAccent,
+  },
+  menuBtn: {
+    padding: 4,
+  },
+  dropdown: {
+    position: 'absolute',
+    top: 48,
+    right: 16,
+    backgroundColor: colors.bgCard,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    zIndex: 100,
+    minWidth: 180,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  dropdownItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 13,
+  },
+  dropdownItemText: {
+    color: colors.textPrimary,
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  dropdownDivider: {
+    height: 1,
+    backgroundColor: colors.divider,
+    marginHorizontal: 8,
+  },
+  retryBtn: {
+    backgroundColor: colors.bgCard,
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 28,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    marginTop: 12,
+  },
+  retryText: {
+    color: colors.textAccent,
+    fontWeight: '600',
+    fontSize: 15,
   },
 });

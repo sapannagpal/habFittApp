@@ -9,16 +9,24 @@ import { Platform } from 'react-native';
 
 const DEV_HOST = Platform.OS === 'android' ? '10.0.2.2' : 'localhost';
 
+// All dev service ports in one place — change here when ports change
+const DEV_PORTS = {
+  auth:      8080,
+  dashboard: 8082,
+  coaching:  8083,
+  workout:   8084,
+};
+
 export const API_BASE_URL = __DEV__
-  ? `http://${DEV_HOST}:8080`
+  ? `http://${DEV_HOST}:${DEV_PORTS.auth}`
   : 'https://api.habfitt.com';
 
 export const DASHBOARD_BASE_URL = __DEV__
-  ? `http://${DEV_HOST}:8082`
+  ? `http://${DEV_HOST}:${DEV_PORTS.dashboard}`
   : 'https://dashboard.habfitt.com';
 
 export const WORKOUT_BASE_URL = __DEV__
-  ? `http://${DEV_HOST}:8083`
+  ? `http://${DEV_HOST}:${DEV_PORTS.workout}`
   : 'https://workout.habfitt.com';
 
 export const API_TIMEOUT_MS = 15_000;

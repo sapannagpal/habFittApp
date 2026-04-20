@@ -16,6 +16,10 @@
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
+jest.mock('../src/context/WorkoutContext', () => ({
+  useWorkout: () => ({ clearActivePlan: jest.fn() }),
+}));
+
 jest.mock('../src/api/workoutApi', () => ({
   workoutApi: {
     getWeeklySchedule: jest.fn(),
@@ -287,6 +291,46 @@ describe('WeeklyScheduleScreen', () => {
       expect(workoutApi.abandonActivePlan).toHaveBeenCalled();
       expect(mockReplace).toHaveBeenCalledWith('PlanCatalogue');
       expect(alertSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  // ─── Week date range display ────────────────────────────────────────────────
+
+  describe('week date range display', () => {
+    it('shows "Apr 14 – Apr 20" for week 1 when plan createdAt is 2026-04-14', async () => {
+      workoutApi.getWeeklySchedule.mockResolvedValueOnce({ data: makeScheduleDays() });
+
+      const { findByText } = renderScreen({ createdAt: '2026-04-14T00:00:00.000Z', currentWeek: 1 });
+
+      await findByText('Apr 14 – Apr 20');
+    });
+
+    it('shows "Apr 21 – Apr 27" for week 2', async () => {
+      workoutApi.getWeeklySchedule.mockResolvedValue({ data: makeScheduleDays() });
+
+      const plan = { ...DEFAULT_PLAN, createdAt: '2026-04-14T00:00:00.000Z', currentWeek: 2 };
+      const { findByText } = render(
+        <WeeklyScheduleScreen
+          navigation={{ replace: mockReplace, navigate: mockNavigate }}
+          route={{ params: { planId: plan.id, plan } }}
+        />,
+      );
+
+      await findByText('Apr 21 – Apr 27');
+    });
+
+    it('falls back to "Week 1" when plan.createdAt is missing', async () => {
+      workoutApi.getWeeklySchedule.mockResolvedValueOnce({ data: makeScheduleDays() });
+
+      const plan = { ...DEFAULT_PLAN, createdAt: undefined, currentWeek: 1 };
+      const { findByText } = render(
+        <WeeklyScheduleScreen
+          navigation={{ replace: mockReplace, navigate: mockNavigate }}
+          route={{ params: { planId: plan.id, plan } }}
+        />,
+      );
+
+      await findByText('Week 1');
     });
   });
 });

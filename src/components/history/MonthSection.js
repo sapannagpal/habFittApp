@@ -10,12 +10,12 @@ import { View } from 'react-native';
 import { SectionHeader } from '../common/SectionHeader';
 import HistoryCard from './HistoryCard';
 
-export default function MonthSection({ monthLabel, entries }) {
+export default function MonthSection({ monthLabel, entries, onEntryPress }) {
   return (
     <View>
       <SectionHeader title={monthLabel} />
       {entries.map(entry => (
-        <HistoryCard key={entry.id} entry={entry} />
+        <HistoryCard key={entry.id} entry={entry} onPress={onEntryPress ? () => onEntryPress(entry) : undefined} />
       ))}
     </View>
   );
