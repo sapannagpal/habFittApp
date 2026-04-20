@@ -147,9 +147,10 @@ describe('WeeklyScheduleScreen', () => {
     it('shows "Rest Day" label for rest day entries', async () => {
       workoutApi.getWeeklySchedule.mockResolvedValueOnce({ data: makeScheduleDays() });
 
-      const { findByText } = renderScreen();
+      const { findAllByText } = renderScreen();
 
-      await findByText('Rest Day');
+      const restDays = await findAllByText('Rest Day');
+      expect(restDays.length).toBeGreaterThanOrEqual(1);
     });
 
     it('shows an error message when the schedule API fails', async () => {
@@ -158,6 +159,23 @@ describe('WeeklyScheduleScreen', () => {
       const { findByText } = renderScreen();
 
       await findByText(/could not load schedule/i);
+    });
+
+    it('pads to 7 days when API returns fewer — stub days show Rest Day', async () => {
+      // makeScheduleDays() has days for dayOfWeek: MONDAY(1), TUESDAY(2 rest), WEDNESDAY(3)
+      // After normalise, days 4-7 are stubs → 5 rest days total (1 real + 4 stubs)
+      workoutApi.getWeeklySchedule.mockResolvedValueOnce({
+        data: { days: [
+          { dayOfWeek: 1, workoutName: 'Push Day', sessionId: 'sess-1', status: 'PENDING', restDay: false, modified: false },
+        ]},
+      });
+
+      const { findByText, findAllByText } = renderScreen();
+
+      await findByText('Push Day');
+      // Days 2-7 are all rest stubs + any that were rest already
+      const restDays = await findAllByText('Rest Day');
+      expect(restDays.length).toBe(6); // days 2,3,4,5,6,7 are rest
     });
   });
 

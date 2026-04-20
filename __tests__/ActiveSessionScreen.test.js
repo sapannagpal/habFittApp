@@ -150,8 +150,8 @@ describe('ActiveSessionScreen', () => {
       const weightInputs = getAllByPlaceholderText('60');
       fireEvent.changeText(weightInputs[0], '55');
 
-      // Tap "Log" button
-      const logButtons = getAllByText('Log');
+      // Tap "Save" button
+      const logButtons = getAllByText('Save');
       fireEvent.press(logButtons[0]);
 
       await waitFor(() => {
@@ -209,7 +209,7 @@ describe('ActiveSessionScreen', () => {
       const repsInputs = getAllByPlaceholderText('10');
       fireEvent.changeText(repsInputs[0], '8');
 
-      fireEvent.press(getAllByText('Log')[0]);
+      fireEvent.press(getAllByText('Save')[0]);
 
       await waitFor(() => {
         const [, body] = workoutApi.logSet.mock.calls[0];
@@ -227,7 +227,7 @@ describe('ActiveSessionScreen', () => {
       const repsInputs = getAllByPlaceholderText('10');
       fireEvent.changeText(repsInputs[0], '12'); // string from TextInput
 
-      fireEvent.press(getAllByText('Log')[0]);
+      fireEvent.press(getAllByText('Save')[0]);
 
       await waitFor(() => {
         const [, body] = workoutApi.logSet.mock.calls[0];
@@ -288,7 +288,7 @@ describe('ActiveSessionScreen', () => {
         if (!children) return false;
         const arr = Array.isArray(children) ? children : [children];
         return arr.some(
-          (c) => c && c.props && (c.props.children === 'Log' || c.props.children?.[0] === 'Log'),
+          (c) => c && c.props && (c.props.children === 'Save' || c.props.children?.[0] === 'Save'),
         );
       });
 
@@ -334,12 +334,12 @@ describe('ActiveSessionScreen', () => {
       const repsInputs = getAllByPlaceholderText('10');
       fireEvent.changeText(repsInputs[0], '10');
 
-      fireEvent.press(getAllByText('Log')[0]);
+      fireEvent.press(getAllByText('Save')[0]);
 
       await waitFor(() => {
-        // After logging, the "Log" button for set 1 should disappear (isDone = true)
-        // The number of Log buttons should decrease from 3 to 2
-        const remainingLogButtons = queryAllByText('Log');
+        // After logging, the "Save" button for set 1 should disappear (isDone = true)
+        // The number of Save buttons should decrease from 3 to 2
+        const remainingLogButtons = queryAllByText('Save');
         expect(remainingLogButtons.length).toBeLessThan(3);
       });
     });
@@ -352,14 +352,14 @@ describe('ActiveSessionScreen', () => {
       const repsInputs = getAllByPlaceholderText('10');
       fireEvent.changeText(repsInputs[0], '10');
 
-      fireEvent.press(getAllByText('Log')[0]);
+      fireEvent.press(getAllByText('Save')[0]);
 
       await waitFor(() => {
         expect(workoutApi.logSet).toHaveBeenCalled();
       });
 
-      // All 3 Log buttons should still be present (set was not marked done)
-      expect(getAllByText('Log').length).toBe(3);
+      // All 3 Save buttons should still be present (set was not marked done)
+      expect(getAllByText('Save').length).toBe(3);
       // And no alert was shown — actions must execute silently on failure
       expect(alertSpy).not.toHaveBeenCalled();
     });
@@ -503,7 +503,7 @@ describe('ActiveSessionScreen', () => {
 
       const repsInputs = getAllByPlaceholderText('10');
       fireEvent.changeText(repsInputs[0], '10');
-      fireEvent.press(getAllByText('Log')[0]);
+      fireEvent.press(getAllByText('Save')[0]);
 
       await waitFor(() => {
         expect(workoutApi.startSession).toHaveBeenCalledTimes(1);
@@ -531,15 +531,20 @@ describe('ActiveSessionScreen', () => {
       expect(workoutApi.abandonSession).not.toHaveBeenCalled();
     });
 
-    it('complete without starting just goes back — no API call', async () => {
+    it('complete without starting calls ensureStarted then completeSession', async () => {
+      workoutApi.startSession.mockResolvedValueOnce({ data: {} });
+      workoutApi.completeSession.mockResolvedValueOnce({ data: { sessionId: 'sess-001', status: 'COMPLETED', actualDurationSeconds: 0 } });
+
       const { getByText } = renderScreen({}, { hasStarted: false });
 
       fireEvent.press(getByText('Complete Workout'));
 
       await waitFor(() => {
-        expect(mockGoBack).toHaveBeenCalled();
+        expect(workoutApi.startSession).toHaveBeenCalledWith('sess-001');
+        expect(workoutApi.completeSession).toHaveBeenCalledWith('sess-001', 'JUST_RIGHT');
+        expect(mockReplace).toHaveBeenCalledWith('WorkoutSummary', expect.any(Object));
       });
-      expect(workoutApi.completeSession).not.toHaveBeenCalled();
+      expect(mockGoBack).not.toHaveBeenCalled();
     });
   });
 
