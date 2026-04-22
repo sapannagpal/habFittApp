@@ -22,7 +22,6 @@ import { colors } from '../../theme/colors';
 import { workoutApi } from '../../api/workoutApi';
 import { useWorkout } from '../../context/WorkoutContext';
 import SwapDaySheet    from '../../components/workout/SwapDaySheet';
-import CombineDaySheet from '../../components/workout/CombineDaySheet';
 
 // ─── Day constants ────────────────────────────────────────────────────────────
 
@@ -62,6 +61,44 @@ function getWeekDateRange(planStartDate, weekNumber) {
   return `${fmt(start)} – ${fmt(end)}`;
 }
 
+const normaliseDays = (data) => {
+  if (!data) return [];
+
+  let raw = [];
+  // Shape A: { days: [...] }
+  if (Array.isArray(data.days)) {
+    raw = data.days;
+  } else if (Array.isArray(data.sessions)) {
+    // Shape B: { sessions: [...] }
+    raw = data.sessions.map((s) => ({
+      dayOfWeek:   s.dayOfWeek,
+      workoutName: s.workoutName ?? s.sessionName ?? null,
+      sessionId:   s.id ?? s.sessionId,
+      status:      s.status,
+      restDay:     s.restDay ?? false,
+      modified:    s.modified ?? false,
+    }));
+  }
+
+  // Build a Map keyed by ISO day number (1=Mon…7=Sun)
+  const dayMap = new Map();
+  raw.forEach((day) => {
+    const n = numDay(day.dayOfWeek);
+    if (n >= 1 && n <= 7) dayMap.set(n, { ...day, dayOfWeek: n });
+  });
+
+  // Produce exactly 7 entries — fill gaps with rest-day stubs
+  const result = [];
+  for (let i = 1; i <= 7; i++) {
+    result.push(
+      dayMap.has(i)
+        ? dayMap.get(i)
+        : { dayOfWeek: i, restDay: true, sessionId: null, workoutName: null, status: null, modified: false },
+    );
+  }
+  return result;
+};
+
 // ─── Day Card ─────────────────────────────────────────────────────────────────
 
 function DayCard({ day, onPress, onLongPress, onMenuPress, isToday }) {
@@ -70,6 +107,8 @@ function DayCard({ day, onPress, onLongPress, onMenuPress, isToday }) {
   const isActive = day.status === 'IN_PROGRESS';
   const canStart = !isRest && !isDone && day.sessionId;
   const short    = DAY_SHORT[day.dayOfWeek] ?? String(day.dayOfWeek ?? '').slice(0, 3);
+
+  const showMenu = !isDone;
 
   let statusIcon = null;
   if (isDone)   statusIcon = <Ionicons name="checkmark-circle" size={20} color={colors.success} />;
@@ -103,7 +142,7 @@ function DayCard({ day, onPress, onLongPress, onMenuPress, isToday }) {
       </View>
       <View style={styles.dayRight}>
         {statusIcon}
-        {canStart && (
+        {showMenu && (
           <TouchableOpacity
             onPress={() => onMenuPress?.(day)}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
@@ -143,7 +182,6 @@ export default function WeeklyScheduleScreen({ route, navigation }) {
   const [startingSession, setStartingSession] = useState(null);
 
   const [swapSource, setSwapSource]       = useState(null);
-  const [combineSource, setCombineSource] = useState(null);
   const [inlineError, setInlineError]     = useState(null);
   const [showMenu, setShowMenu]           = useState(false);
 
@@ -239,36 +277,6 @@ export default function WeeklyScheduleScreen({ route, navigation }) {
     [planId],
   );
 
-  const handleCombine = useCallback(
-    async (sourceDay, targetDay) => {
-      let snapshot;
-      setSchedule(prev => {
-        snapshot = prev;
-        const arr = [...normaliseDays(prev)];
-        const sIdx = arr.findIndex(d => numDay(d.dayOfWeek) === sourceDay);
-        const tIdx = arr.findIndex(d => numDay(d.dayOfWeek) === targetDay);
-        if (sIdx >= 0 && tIdx >= 0) {
-          const srcName = arr[sIdx].workoutName ?? '';
-          arr[sIdx] = { ...arr[sIdx], restDay: true, sessionId: null, workoutName: null, status: null, modified: true };
-          arr[tIdx] = {
-            ...arr[tIdx],
-            workoutName: `${arr[tIdx].workoutName ?? 'Workout'} + ${srcName}`.trim(),
-            modified: true,
-          };
-        }
-        return { days: arr };
-      });
-      setCombineSource(null);
-      try {
-        await workoutApi.combineDays(planId, { sourceDay, targetDay });
-      } catch {
-        if (snapshot !== undefined) setSchedule(snapshot);
-        setInlineError('Combine failed. Please try again.');
-      }
-    },
-    [planId],
-  );
-
   const changeWeek = (delta) => {
     const next = weekNumber + delta;
     if (next < 1) return;
@@ -285,31 +293,6 @@ export default function WeeklyScheduleScreen({ route, navigation }) {
       if (__DEV__) console.warn('[WeeklySchedule] abandonPlan failed:', e.response?.status, e.message);
       setInlineError('Could not abandon plan. Please try again.');
     }
-  };
-
-  // Resolve the days array from the API response.
-  // The 8084 service returns a PlanWeek entity; sessions may be at
-  // data.sessions (array) or data.days (array) depending on the serialisation.
-  // We normalise both shapes here so the DayCard receives a consistent object.
-  const normaliseDays = (data) => {
-    if (!data) return [];
-
-    // Shape A: { days: [...] }
-    if (Array.isArray(data.days)) return data.days;
-
-    // Shape B: { sessions: [...] } — map to the same field names DayCard expects
-    if (Array.isArray(data.sessions)) {
-      return data.sessions.map((s) => ({
-        dayOfWeek:   s.dayOfWeek,
-        workoutName: s.workoutName ?? s.sessionName ?? null,
-        sessionId:   s.id ?? s.sessionId,
-        status:      s.status,
-        restDay:     s.restDay ?? false,
-        modified:    s.modified ?? false,
-      }));
-    }
-
-    return [];
   };
 
   const days = normaliseDays(schedule);
@@ -442,7 +425,7 @@ export default function WeeklyScheduleScreen({ route, navigation }) {
                 day={day}
                 onPress={handleDayPress}
                 onLongPress={(d) => setSwapSource(numDay(d.dayOfWeek))}
-                onMenuPress={(d) => setCombineSource(numDay(d.dayOfWeek))}
+                onMenuPress={(d) => setSwapSource(numDay(d.dayOfWeek))}
                 isToday={numDay(day.dayOfWeek) === todayIsoDay()}
               />
             ))
@@ -463,13 +446,6 @@ export default function WeeklyScheduleScreen({ route, navigation }) {
         days={days}
         onSwap={handleSwap}
         onDismiss={() => setSwapSource(null)}
-      />
-      <CombineDaySheet
-        visible={combineSource != null}
-        sourceDay={combineSource}
-        days={days}
-        onCombine={handleCombine}
-        onDismiss={() => setCombineSource(null)}
       />
     </SafeAreaView>
   );

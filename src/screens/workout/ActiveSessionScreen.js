@@ -23,6 +23,9 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
+  Animated,
+  Modal,
+  FlatList,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -41,7 +44,7 @@ const DRAFT_TTL_MS = 24 * 60 * 60 * 1000;
 
 // ─── Set Row ──────────────────────────────────────────────────────────────────
 
-function SetRow({ set, exerciseId, sessionExerciseId, sessionId, ensureStarted, prescribedReps, prescribedWeight, onLogged, onError }) {
+function SetRow({ set, exerciseId, sessionExerciseId, sessionId, ensureStarted, prescribedReps, prescribedWeight, onLogged, onError, onRemove }) {
   // Initialise from: set.weightKg → prescribedWeight → ''
   const [reps, setReps]     = useState(set.reps != null ? String(set.reps) : '');
   const [weight, setWeight] = useState(
@@ -52,6 +55,22 @@ function SetRow({ set, exerciseId, sessionExerciseId, sessionId, ensureStarted, 
         : '',
   );
   const [saving, setSaving] = useState(false);
+
+  // Bug 8: track initial values to determine dirty state
+  const initialRepsRef   = useRef(set.reps != null ? String(set.reps) : '');
+  const initialWeightRef = useRef(
+    set.weightKg != null
+      ? String(set.weightKg)
+      : prescribedWeight != null
+        ? String(prescribedWeight)
+        : '',
+  );
+
+  // Bug 8: derived dirty flag
+  const isDirty = (reps !== initialRepsRef.current) || (String(weight) !== String(initialWeightRef.current));
+
+  // Bug 7b: slide-out animation ref
+  const slideAnim = useRef(new Animated.Value(0)).current;
 
   const isDone = set.status === 'COMPLETED' || set.status === 'SKIPPED';
 
@@ -99,77 +118,95 @@ function SetRow({ set, exerciseId, sessionExerciseId, sessionId, ensureStarted, 
     }
   };
 
+  // Bug 7b: slide-out and call onRemove
+  const handleRemove = () => {
+    Animated.timing(slideAnim, {
+      toValue: -500,
+      duration: 200,
+      useNativeDriver: true,
+    }).start(() => {
+      onRemove?.();
+    });
+  };
+
+  useEffect(() => () => slideAnim.stopAnimation(), []);
+
   return (
-    <View style={[styles.setRow, isDone && styles.setRowDone]}>
-      {/* Set number */}
-      <View style={[styles.setNumBox, isDone && styles.setNumBoxDone]}>
-        {isDone ? (
-          <Ionicons
-            name={set.status === 'SKIPPED' ? 'remove' : 'checkmark'}
-            size={14}
-            color={set.status === 'SKIPPED' ? colors.textSecondary : colors.success}
-          />
-        ) : (
-          <Text style={styles.setNum}>{set.setNumber}</Text>
-        )}
-      </View>
-
-      {/* Inputs */}
-      <View style={styles.setInputs}>
-        <View style={styles.inputGroup}>
-          <Text style={styles.inputLabel}>
-            Reps {prescribedReps ? `(${prescribedReps})` : ''}
-          </Text>
-          <TextInput
-            style={[styles.input, isDone && styles.inputDone]}
-            value={reps}
-            onChangeText={setReps}
-            keyboardType="number-pad"
-            placeholder={prescribedReps ? String(prescribedReps) : '—'}
-            placeholderTextColor={colors.textSecondary}
-            editable={!isDone}
-          />
-        </View>
-        <View style={styles.inputGroup}>
-          <Text style={styles.inputLabel}>
-            kg {prescribedWeight ? `(${prescribedWeight})` : ''}
-          </Text>
-          <TextInput
-            style={[styles.input, isDone && styles.inputDone]}
-            value={weight}
-            onChangeText={setWeight}
-            keyboardType="decimal-pad"
-            placeholder={prescribedWeight ? String(prescribedWeight) : '—'}
-            placeholderTextColor={colors.textSecondary}
-            editable={!isDone}
-          />
-        </View>
-      </View>
-
-      {/* Actions */}
-      {!isDone && (
-        <View style={styles.setActions}>
-          {saving ? (
-            <ActivityIndicator size="small" color={colors.textAccent} />
+    <Animated.View style={{ transform: [{ translateX: slideAnim }] }}>
+      <View style={[styles.setRow, isDone && styles.setRowDone]}>
+        {/* Set number */}
+        <View style={[styles.setNumBox, isDone && styles.setNumBoxDone]}>
+          {isDone ? (
+            <Ionicons
+              name={set.status === 'SKIPPED' ? 'remove' : 'checkmark'}
+              size={14}
+              color={set.status === 'SKIPPED' ? colors.textSecondary : colors.success}
+            />
           ) : (
-            <>
-              <TouchableOpacity style={styles.logBtn} onPress={handleLog} disabled={!reps}>
-                <Text style={[styles.logBtnText, !reps && styles.logBtnDisabled]}>Log</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={handleSkip} style={styles.skipBtn}>
-                <Ionicons name="remove-circle-outline" size={20} color={colors.textSecondary} />
-              </TouchableOpacity>
-            </>
+            <Text style={styles.setNum}>{set.setNumber}</Text>
           )}
         </View>
-      )}
-    </View>
+
+        {/* Inputs */}
+        <View style={styles.setInputs}>
+          <View style={styles.inputGroup}>
+            <Text style={styles.inputLabel}>
+              Reps {prescribedReps ? `(${prescribedReps})` : ''}
+            </Text>
+            <TextInput
+              style={[styles.input, isDone && styles.inputDone, { color: colors.textPrimary }]}
+              value={reps}
+              onChangeText={setReps}
+              keyboardType="number-pad"
+              placeholder={prescribedReps ? String(prescribedReps) : '—'}
+              placeholderTextColor={colors.textSecondary}
+              editable={!isDone}
+            />
+          </View>
+          <View style={styles.inputGroup}>
+            <Text style={styles.inputLabel}>
+              kg {prescribedWeight ? `(${prescribedWeight})` : ''}
+            </Text>
+            <TextInput
+              style={[styles.input, isDone && styles.inputDone]}
+              value={weight}
+              onChangeText={setWeight}
+              keyboardType="decimal-pad"
+              placeholder={prescribedWeight ? String(prescribedWeight) : '—'}
+              placeholderTextColor={colors.textSecondary}
+              editable={!isDone}
+            />
+          </View>
+        </View>
+
+        {/* Actions */}
+        {!isDone && (
+          <View style={styles.setActions}>
+            {saving ? (
+              <ActivityIndicator size="small" color={colors.textAccent} />
+            ) : (
+              <>
+                <TouchableOpacity style={styles.logBtn} onPress={handleLog} disabled={!reps || !isDirty}>
+                  <Text style={[styles.logBtnText, (!reps || !isDirty) && styles.logBtnDisabled]}>Save</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={handleSkip} style={styles.skipBtn}>
+                  <Ionicons name="remove-circle-outline" size={20} color={colors.textSecondary} />
+                </TouchableOpacity>
+                <TouchableOpacity onPress={handleRemove} style={styles.removeSetBtn}>
+                  <Ionicons name="minus-circle" size={20} color={colors.error} />
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
+        )}
+      </View>
+    </Animated.View>
   );
 }
 
 // ─── Exercise Card ────────────────────────────────────────────────────────────
 
-function ExerciseCard({ exercise, sessionId, ensureStarted, onSetLogged, onSwapPress, onSetError }) {
+function ExerciseCard({ exercise, sessionId, ensureStarted, onSetLogged, onSwapPress, onSetError, onRemoveSet }) {
   // API contract (from GET /sessions/{id}/detail):
   //   exerciseId         — catalogue reference ID (used in logSet/skipSet payloads)
   //   sessionExerciseId  — this session's exercise row ID (used as React key + state match)
@@ -261,6 +298,7 @@ function ExerciseCard({ exercise, sessionId, ensureStarted, onSetLogged, onSwapP
           prescribedWeight={lastLoggedWeight ?? exercise.weightKg ?? null}
           onLogged={(logged) => onSetLogged(exercise.sessionExerciseId, set.setNumber, logged)}
           onError={onSetError}
+          onRemove={() => onRemoveSet?.(exercise.sessionExerciseId, set.setNumber)}
         />
       ))}
     </View>
@@ -273,6 +311,7 @@ export default function ActiveSessionScreen({ route, navigation }) {
   const { session: initialSession, hasStarted: initialHasStarted = false } = route.params;
   const [session, setSession]         = useState(initialSession);
   const [completing, setCompleting]   = useState(false);
+  const completingRef = useRef(false);
   const [showEndSheet, setShowEndSheet] = useState(false);
 
   const [substituteTarget, setSubstituteTarget] = useState(null);
@@ -281,6 +320,12 @@ export default function ActiveSessionScreen({ route, navigation }) {
 
   // Rest timer state
   const [restTimer, setRestTimer] = useState({ visible: false, seconds: 60, nextExercise: null });
+
+  // Bug 6: Add Exercise modal state
+  const [addExerciseVisible, setAddExerciseVisible]   = useState(false);
+  const [allExercises, setAllExercises]               = useState([]);
+  const [exerciseSearch, setExerciseSearch]           = useState('');
+  const [exercisesLoading, setExercisesLoading]       = useState(false);
 
   // sessionRef always tracks the latest session value so callbacks outside
   // the state updater (e.g. handleSetLogged rest-timer logic) read fresh state.
@@ -464,6 +509,60 @@ export default function ActiveSessionScreen({ route, navigation }) {
     [session.sessionId],
   );
 
+  // Bug 7b: remove a set from local session state
+  const handleRemoveSet = useCallback((sessionExerciseId, setNumber) => {
+    setSession(prev => ({
+      ...prev,
+      exercises: prev.exercises.map(ex => {
+        if (ex.sessionExerciseId !== sessionExerciseId) return ex;
+        const newLogs = (ex.logs ?? []).filter(l => l.setNumber !== setNumber);
+        return { ...ex, sets: Math.max(0, (ex.sets ?? 0) - 1), logs: newLogs };
+      }),
+    }));
+  }, []);
+
+  // Bug 6: open Add Exercise modal and fetch exercise list
+  const handleOpenAddExercise = useCallback(async () => {
+    setAddExerciseVisible(true);
+    if (allExercises.length === 0) {
+      setExercisesLoading(true);
+      try {
+        const { data } = await workoutApi.getExercises();
+        setAllExercises(data ?? []);
+      } catch (e) {
+        if (__DEV__) console.warn('[ActiveSession] getExercises failed:', e.message);
+        setInlineError('Could not load exercises. Please try again.');
+      } finally {
+        setExercisesLoading(false);
+      }
+    }
+  }, [allExercises.length]);
+
+  // Bug 6: add selected exercise to local session state
+  const handleAddExercise = useCallback((ex) => {
+    setSession(prev => ({
+      ...prev,
+      exercises: [
+        ...prev.exercises,
+        {
+          sessionExerciseId: 'local-' + Date.now(),
+          exerciseId:   ex.id,
+          name:         ex.name,
+          sets:         ex.sets ?? 3,
+          reps:         ex.reps ?? 10,
+          weightKg:     ex.weightKg ?? null,
+          logs:         [],
+          warmup:       false,
+          cooldown:     false,
+          restSeconds:  60,
+          exerciseOrder: prev.exercises.length + 1,
+        },
+      ],
+    }));
+    setAddExerciseVisible(false);
+    setExerciseSearch('');
+  }, []);
+
   const completedExercises = session.exercises?.filter((ex) => {
     const prescribedSets = ex.sets ?? 0;
     const done = ex.logs?.filter(
@@ -478,15 +577,18 @@ export default function ActiveSessionScreen({ route, navigation }) {
     return sum + (ex.logs?.filter(l => l.status === 'COMPLETED' || l.status === 'SKIPPED').length ?? 0);
   }, 0) ?? 0;
 
-  // Complete Workout — completes the session with JUST_RIGHT feedback
+  // Bug 6: filtered exercise list for search
+  const filteredExercises = allExercises.filter(ex =>
+    (ex.name ?? '').toLowerCase().includes(exerciseSearch.toLowerCase()),
+  );
+
+  // Bug 3: Complete Workout — always calls ensureStarted() before completing
   const handleCompletePress = async () => {
-    if (!hasStartedRef.current) {
-      // Session never started — just go back
-      navigation.goBack();
-      return;
-    }
+    if (completingRef.current) return;
+    completingRef.current = true;
     setCompleting(true);
     try {
+      await ensureStarted();
       const { data: completed } = await workoutApi.completeSession(session.sessionId, 'JUST_RIGHT');
       AsyncStorage.removeItem(DRAFT_KEY_PREFIX + session.sessionId).catch(() => {});
       navigation.replace('WorkoutSummary', { session: completed, sessionData: session });
@@ -494,6 +596,7 @@ export default function ActiveSessionScreen({ route, navigation }) {
       if (__DEV__) console.warn('[ActiveSession] complete failed:', e.response?.status, e.message);
       setInlineError('Could not complete workout. Please try again.');
     } finally {
+      completingRef.current = false;
       setCompleting(false);
     }
   };
@@ -611,8 +714,20 @@ export default function ActiveSessionScreen({ route, navigation }) {
                 exerciseName: exercise.name,
               })}
               onSetError={(msg) => setInlineError(msg)}
+              onRemoveSet={handleRemoveSet}
             />
           ))}
+
+          {/* Bug 6: Add Exercise button */}
+          <TouchableOpacity
+            onPress={handleOpenAddExercise}
+            style={styles.addExerciseBtn}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="add-circle-outline" size={18} color={colors.textAccent} />
+            <Text style={styles.addExerciseBtnText}>Add Exercise</Text>
+          </TouchableOpacity>
+
           <View style={{ height: 100 }} />
         </ScrollView>
 
@@ -671,6 +786,59 @@ export default function ActiveSessionScreen({ route, navigation }) {
         onSubstitute={handleSubstitute}
         onDismiss={() => setSubstituteTarget(null)}
       />
+
+      {/* Bug 6: Add Exercise modal */}
+      <Modal
+        visible={addExerciseVisible}
+        animationType="slide"
+        transparent={false}
+        onRequestClose={() => setAddExerciseVisible(false)}
+      >
+        <SafeAreaView style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Add Exercise</Text>
+            <TouchableOpacity onPress={() => setAddExerciseVisible(false)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Ionicons name="close" size={24} color={colors.textPrimary} />
+            </TouchableOpacity>
+          </View>
+          <TextInput
+            value={exerciseSearch}
+            onChangeText={setExerciseSearch}
+            placeholder="Search exercises…"
+            placeholderTextColor={colors.textSecondary}
+            style={styles.searchInput}
+            autoFocus
+          />
+          {exercisesLoading ? (
+            <View style={styles.center}>
+              <ActivityIndicator size="large" color={colors.textAccent} />
+            </View>
+          ) : (
+            <FlatList
+              data={filteredExercises}
+              keyExtractor={item => String(item.id)}
+              contentContainerStyle={{ paddingBottom: 32 }}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  onPress={() => handleAddExercise(item)}
+                  style={styles.exerciseListItem}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.exerciseListItemName}>{item.name}</Text>
+                  {item.sets && (
+                    <Text style={styles.exerciseListItemMeta}>{item.sets} sets × {item.reps ?? '—'} reps</Text>
+                  )}
+                </TouchableOpacity>
+              )}
+              ListEmptyComponent={
+                <View style={{ padding: 24, alignItems: 'center' }}>
+                  <Text style={{ color: colors.textSecondary, fontSize: 14 }}>No exercises found.</Text>
+                </View>
+              }
+            />
+          )}
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -868,6 +1036,9 @@ const styles = StyleSheet.create({
   skipBtn: {
     padding: 2,
   },
+  removeSetBtn: {
+    padding: 2,
+  },
   // Inline error
   inlineErrorBanner: {
     flexDirection: 'row',
@@ -915,5 +1086,74 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 17,
     fontWeight: '700',
+  },
+  // Add Exercise button
+  addExerciseBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: `${colors.textAccent}40`,
+    backgroundColor: `${colors.textAccent}08`,
+    marginTop: 4,
+  },
+  addExerciseBtnText: {
+    color: colors.textAccent,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  // Add Exercise modal
+  modalContainer: {
+    flex: 1,
+    backgroundColor: colors.bgPrimary,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.divider,
+  },
+  modalTitle: {
+    color: colors.textPrimary,
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  searchInput: {
+    backgroundColor: colors.bgCard,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    color: colors.textPrimary,
+    fontSize: 15,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    margin: 16,
+  },
+  center: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  exerciseListItem: {
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.divider,
+    gap: 3,
+  },
+  exerciseListItemName: {
+    color: colors.textPrimary,
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  exerciseListItemMeta: {
+    color: colors.textSecondary,
+    fontSize: 12,
   },
 });
