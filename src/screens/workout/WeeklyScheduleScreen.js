@@ -15,6 +15,9 @@ import {
   ActivityIndicator,
   StyleSheet,
   RefreshControl,
+  Modal,
+  FlatList,
+  TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -52,24 +55,67 @@ function todayIsoDay() {
 
 const MONTH_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
+/**
+ * Returns the start Date for a given week number.
+ * Week 1: starts on planStartDate (may be mid-week).
+ * Week N (N>1): the Monday after Week 1's Sunday, plus (N-2) full weeks.
+ */
+function getWeekStartDate(planStartDate, weekNumber) {
+  const planStart = new Date(planStartDate);
+  planStart.setHours(0, 0, 0, 0);
+  if (weekNumber === 1) return new Date(planStart);
+
+  const planStartIso = planStart.getDay() === 0 ? 7 : planStart.getDay();
+  const week1Sunday = new Date(planStart);
+  week1Sunday.setDate(planStart.getDate() + (7 - planStartIso));
+
+  const weekStart = new Date(week1Sunday);
+  weekStart.setDate(week1Sunday.getDate() + 1 + (weekNumber - 2) * 7);
+  return weekStart;
+}
+
+/**
+ * Returns the actual calendar Date for a specific day card.
+ * @param {string|Date} planStartDate
+ * @param {number} weekNumber
+ * @param {number} isoDayOfWeek  1=Mon ... 7=Sun
+ */
+function getActualDate(planStartDate, weekNumber, isoDayOfWeek) {
+  const weekStart = getWeekStartDate(planStartDate, weekNumber);
+  const weekStartIso = weekStart.getDay() === 0 ? 7 : weekStart.getDay();
+  const offset = isoDayOfWeek - weekStartIso;
+  const result = new Date(weekStart);
+  result.setDate(weekStart.getDate() + offset);
+  return result;
+}
+
 function getWeekDateRange(planStartDate, weekNumber) {
-  const start = new Date(planStartDate);
-  start.setDate(start.getDate() + (weekNumber - 1) * 7);
-  const end = new Date(start);
-  end.setDate(end.getDate() + 6);
+  const start = getWeekStartDate(planStartDate, weekNumber);
+  let end;
+  if (weekNumber === 1) {
+    const startIso = start.getDay() === 0 ? 7 : start.getDay();
+    if (startIso === 7) {
+      // Plan starts on Sunday — week 1 is just that day
+      end = new Date(start);
+    } else {
+      end = new Date(start);
+      end.setDate(start.getDate() + (7 - startIso));
+    }
+  } else {
+    end = new Date(start);
+    end.setDate(start.getDate() + 6);
+  }
   const fmt = (d) => `${MONTH_SHORT[d.getMonth()]} ${d.getDate()}`;
   return `${fmt(start)} – ${fmt(end)}`;
 }
 
-const normaliseDays = (data) => {
+const normaliseDays = (data, weekNumber = null, planStartDate = null) => {
   if (!data) return [];
 
   let raw = [];
-  // Shape A: { days: [...] }
   if (Array.isArray(data.days)) {
     raw = data.days;
   } else if (Array.isArray(data.sessions)) {
-    // Shape B: { sessions: [...] }
     raw = data.sessions.map((s) => ({
       dayOfWeek:   s.dayOfWeek,
       workoutName: s.workoutName ?? s.sessionName ?? null,
@@ -80,16 +126,22 @@ const normaliseDays = (data) => {
     }));
   }
 
-  // Build a Map keyed by ISO day number (1=Mon…7=Sun)
   const dayMap = new Map();
   raw.forEach((day) => {
     const n = numDay(day.dayOfWeek);
     if (n >= 1 && n <= 7) dayMap.set(n, { ...day, dayOfWeek: n });
   });
 
-  // Produce exactly 7 entries — fill gaps with rest-day stubs
+  // Determine first ISO day to show
+  let startDay = 1;
+  if (weekNumber === 1 && planStartDate) {
+    const ps = new Date(planStartDate);
+    const jsDay = ps.getDay(); // 0=Sun ... 6=Sat
+    startDay = jsDay === 0 ? 7 : jsDay;
+  }
+
   const result = [];
-  for (let i = 1; i <= 7; i++) {
+  for (let i = startDay; i <= 7; i++) {
     result.push(
       dayMap.has(i)
         ? dayMap.get(i)
@@ -102,11 +154,12 @@ const normaliseDays = (data) => {
 // ─── Day Card ─────────────────────────────────────────────────────────────────
 
 function DayCard({ day, onPress, onLongPress, onMenuPress, isToday }) {
-  const isRest   = day.restDay;
-  const isDone   = day.status?.toUpperCase() === 'COMPLETED';
-  const isActive = day.status === 'IN_PROGRESS';
-  const canStart = !isRest && !isDone && day.sessionId;
-  const short    = DAY_SHORT[day.dayOfWeek] ?? String(day.dayOfWeek ?? '').slice(0, 3);
+  const isRest          = day.restDay;
+  const isDone          = day.status?.toUpperCase() === 'COMPLETED';
+  const isActive        = day.status === 'IN_PROGRESS';
+  const canStart        = !isRest && !isDone && day.sessionId;
+  const isLocalExercise = !isRest && !day.sessionId;
+  const short           = DAY_SHORT[day.dayOfWeek] ?? String(day.dayOfWeek ?? '').slice(0, 3);
 
   const showMenu = !isDone;
 
@@ -127,7 +180,7 @@ function DayCard({ day, onPress, onLongPress, onMenuPress, isToday }) {
       onPress={() => canStart && onPress(day)}
       onLongPress={() => canStart && onLongPress?.(day)}
       activeOpacity={canStart ? 0.7 : 1}
-      disabled={!canStart}
+      disabled={!canStart && !isLocalExercise}
     >
       <View style={styles.dayLeft}>
         <Text style={styles.dayShort}>{short}</Text>
@@ -137,6 +190,11 @@ function DayCard({ day, onPress, onLongPress, onMenuPress, isToday }) {
         {day.modified && (
           <View style={styles.modBadge}>
             <Text style={styles.modText}>Modified</Text>
+          </View>
+        )}
+        {isLocalExercise && (
+          <View style={[styles.modBadge, { backgroundColor: `${colors.restAccent}20` }]}>
+            <Text style={[styles.modText, { color: colors.restAccent }]}>Local</Text>
           </View>
         )}
       </View>
@@ -184,6 +242,11 @@ export default function WeeklyScheduleScreen({ route, navigation }) {
   const [swapSource, setSwapSource]       = useState(null);
   const [inlineError, setInlineError]     = useState(null);
   const [showMenu, setShowMenu]           = useState(false);
+
+  const [addExerciseDay, setAddExerciseDay]     = useState(null);   // ISO day number for rest-day exercise addition
+  const [restExerciseList, setRestExerciseList] = useState([]);
+  const [restExerciseSearch, setRestExerciseSearch] = useState('');
+  const [loadingRestExercises, setLoadingRestExercises] = useState(false);
 
   const load = useCallback(
     async (wk, isRefresh = false) => {
@@ -255,7 +318,7 @@ export default function WeeklyScheduleScreen({ route, navigation }) {
       let snapshot;
       setSchedule(prev => {
         snapshot = prev;
-        const arr = [...normaliseDays(prev)];
+        const arr = [...normaliseDays(prev, weekNumber, plan?.createdAt)];
         const sIdx = arr.findIndex(d => numDay(d.dayOfWeek) === sourceDay);
         const tIdx = arr.findIndex(d => numDay(d.dayOfWeek) === targetDay);
         if (sIdx >= 0 && tIdx >= 0) {
@@ -295,7 +358,37 @@ export default function WeeklyScheduleScreen({ route, navigation }) {
     }
   };
 
-  const days = normaliseDays(schedule);
+  useEffect(() => {
+    if (addExerciseDay == null) return;
+    if (restExerciseList.length > 0) return;
+    setLoadingRestExercises(true);
+    workoutApi.getExercises()
+      .then(({ data }) => setRestExerciseList(data ?? []))
+      .catch(() => setInlineError('Could not load exercises.'))
+      .finally(() => setLoadingRestExercises(false));
+  }, [addExerciseDay]);
+
+  const handleRestDayAddExercise = useCallback((exercise) => {
+    setSchedule(prev => {
+      const arr = normaliseDays(prev, weekNumber, plan?.createdAt);
+      const idx = arr.findIndex(d => numDay(d.dayOfWeek) === addExerciseDay);
+      if (idx >= 0) {
+        arr[idx] = {
+          ...arr[idx],
+          restDay: false,
+          workoutName: exercise.name,
+          modified: true,
+          sessionId: null,
+          status: null,
+        };
+      }
+      return { days: arr };
+    });
+    setAddExerciseDay(null);
+    setRestExerciseSearch('');
+  }, [addExerciseDay, weekNumber, plan?.createdAt]);
+
+  const days = normaliseDays(schedule, weekNumber, plan?.createdAt);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -425,8 +518,20 @@ export default function WeeklyScheduleScreen({ route, navigation }) {
                 day={day}
                 onPress={handleDayPress}
                 onLongPress={(d) => setSwapSource(numDay(d.dayOfWeek))}
-                onMenuPress={(d) => setSwapSource(numDay(d.dayOfWeek))}
-                isToday={numDay(day.dayOfWeek) === todayIsoDay()}
+                onMenuPress={(d) => {
+                  if (d.restDay) {
+                    setAddExerciseDay(numDay(d.dayOfWeek));
+                  } else {
+                    setSwapSource(numDay(d.dayOfWeek));
+                  }
+                }}
+                isToday={!!planStart && (() => {
+                  const cardDate = getActualDate(planStart, weekNumber, numDay(day.dayOfWeek));
+                  const now = new Date();
+                  return cardDate.getFullYear() === now.getFullYear()
+                    && cardDate.getMonth() === now.getMonth()
+                    && cardDate.getDate() === now.getDate();
+                })()}
               />
             ))
           )}
@@ -447,6 +552,57 @@ export default function WeeklyScheduleScreen({ route, navigation }) {
         onSwap={handleSwap}
         onDismiss={() => setSwapSource(null)}
       />
+
+      {/* Rest-day Add Exercise picker */}
+      <Modal
+        visible={addExerciseDay != null}
+        animationType="slide"
+        transparent={false}
+        onRequestClose={() => setAddExerciseDay(null)}
+      >
+        <SafeAreaView style={styles.container}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Add Exercise</Text>
+            <TouchableOpacity onPress={() => setAddExerciseDay(null)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Ionicons name="close" size={24} color={colors.textPrimary} />
+            </TouchableOpacity>
+          </View>
+          <TextInput
+            value={restExerciseSearch}
+            onChangeText={setRestExerciseSearch}
+            placeholder="Search exercises…"
+            placeholderTextColor={colors.textSecondary}
+            style={styles.modalSearchInput}
+            autoFocus
+          />
+          {loadingRestExercises ? (
+            <View style={styles.center}><ActivityIndicator size="large" color={colors.textAccent} /></View>
+          ) : (
+            <FlatList
+              data={restExerciseList.filter(ex => (ex.name ?? '').toLowerCase().includes(restExerciseSearch.toLowerCase()))}
+              keyExtractor={item => String(item.id)}
+              contentContainerStyle={{ paddingBottom: 32 }}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  onPress={() => handleRestDayAddExercise(item)}
+                  style={styles.modalExerciseItem}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.modalExerciseItemName}>{item.name}</Text>
+                  {item.muscleGroup && (
+                    <Text style={styles.modalExerciseItemMeta}>{item.muscleGroup}</Text>
+                  )}
+                </TouchableOpacity>
+              )}
+              ListEmptyComponent={
+                <View style={{ padding: 24, alignItems: 'center' }}>
+                  <Text style={{ color: colors.textSecondary, fontSize: 14 }}>No exercises found.</Text>
+                </View>
+              }
+            />
+          )}
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -667,5 +823,46 @@ const styles = StyleSheet.create({
     color: colors.textAccent,
     fontWeight: '600',
     fontSize: 15,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.divider,
+  },
+  modalTitle: {
+    color: colors.textPrimary,
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  modalSearchInput: {
+    margin: 16,
+    backgroundColor: colors.bgCard,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    color: colors.textPrimary,
+    fontSize: 15,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+  },
+  modalExerciseItem: {
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.divider,
+  },
+  modalExerciseItemName: {
+    color: colors.textPrimary,
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  modalExerciseItemMeta: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    marginTop: 2,
   },
 });

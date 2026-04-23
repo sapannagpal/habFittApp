@@ -40,11 +40,11 @@ import RestTimerModal from '../../components/session/RestTimerModal';
 // ─── Draft persistence constants ─────────────────────────────────────────────
 
 const DRAFT_KEY_PREFIX = 'habfitt:session_draft:';
-const DRAFT_TTL_MS = 24 * 60 * 60 * 1000;
+const DRAFT_TTL_MS = 48 * 60 * 60 * 1000;
 
 // ─── Set Row ──────────────────────────────────────────────────────────────────
 
-function SetRow({ set, exerciseId, sessionExerciseId, sessionId, ensureStarted, prescribedReps, prescribedWeight, onLogged, onError, onRemove }) {
+function SetRow({ set, exerciseId, sessionExerciseId, prescribedReps, prescribedWeight, onRemove, onValueChange }) {
   // Initialise from: set.weightKg → prescribedWeight → ''
   const [reps, setReps]     = useState(set.reps != null ? String(set.reps) : '');
   const [weight, setWeight] = useState(
@@ -54,80 +54,11 @@ function SetRow({ set, exerciseId, sessionExerciseId, sessionId, ensureStarted, 
         ? String(prescribedWeight)
         : '',
   );
-  const [saving, setSaving] = useState(false);
 
-  // Bug 8: track initial values to determine dirty state
-  const initialRepsRef   = useRef(set.reps != null ? String(set.reps) : '');
-  const initialWeightRef = useRef(
-    set.weightKg != null
-      ? String(set.weightKg)
-      : prescribedWeight != null
-        ? String(prescribedWeight)
-        : '',
-  );
-
-  // Bug 8: derived dirty flag
-  const isDirty = (reps !== initialRepsRef.current) || (String(weight) !== String(initialWeightRef.current));
-
-  // Bug 7b: slide-out animation ref
+  // slide-out animation ref
   const slideAnim = useRef(new Animated.Value(0)).current;
 
   const isDone = set.status === 'COMPLETED' || set.status === 'SKIPPED';
-
-  const handleLog = async () => {
-    if (!exerciseId) {
-      if (__DEV__) console.warn('[SetRow] exerciseId missing');
-      return;
-    }
-    if (!reps || saving) return;
-    setSaving(true);
-    try {
-      // Lazy-start: first log triggers POST /sessions/{id}/start
-      await ensureStarted();
-      // logSet(sessionId, { exerciseId, setNumber, reps, weightKg })
-      const { data } = await workoutApi.logSet(sessionId, {
-        exerciseId: exerciseId,
-        setNumber:  set.setNumber,
-        reps:       parseInt(reps, 10),
-        weightKg:   weight ? parseFloat(weight) : null,
-      });
-      onLogged(data);
-    } catch (e) {
-      if (__DEV__) console.warn('[ActiveSession] logSet failed:', e.response?.status, e.message);
-      onError?.('Could not log set. Please try again.');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleSkip = async () => {
-    if (saving) return;
-    setSaving(true);
-    try {
-      await ensureStarted();
-      await workoutApi.skipSet(sessionId, {
-        exerciseId: exerciseId,
-        setNumber:  set.setNumber,
-      });
-      onLogged({ ...set, status: 'SKIPPED' });
-    } catch (e) {
-      if (__DEV__) console.warn('[ActiveSession] skipSet failed:', e.response?.status, e.message);
-      onError?.('Could not skip set. Please try again.');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  // Bug 7b: slide-out and call onRemove
-  const handleRemove = () => {
-    Animated.timing(slideAnim, {
-      toValue: -500,
-      duration: 200,
-      useNativeDriver: true,
-    }).start(() => {
-      onRemove?.();
-    });
-  };
 
   useEffect(() => () => slideAnim.stopAnimation(), []);
 
@@ -156,7 +87,7 @@ function SetRow({ set, exerciseId, sessionExerciseId, sessionId, ensureStarted, 
             <TextInput
               style={[styles.input, isDone && styles.inputDone, { color: colors.textPrimary }]}
               value={reps}
-              onChangeText={setReps}
+              onChangeText={(v) => { setReps(v); onValueChange?.('reps', v); }}
               keyboardType="number-pad"
               placeholder={prescribedReps ? String(prescribedReps) : '—'}
               placeholderTextColor={colors.textSecondary}
@@ -168,9 +99,9 @@ function SetRow({ set, exerciseId, sessionExerciseId, sessionId, ensureStarted, 
               kg {prescribedWeight ? `(${prescribedWeight})` : ''}
             </Text>
             <TextInput
-              style={[styles.input, isDone && styles.inputDone]}
+              style={[styles.input, isDone && styles.inputDone, { color: colors.textPrimary }]}
               value={weight}
-              onChangeText={setWeight}
+              onChangeText={(v) => { setWeight(v); onValueChange?.('weight', v); }}
               keyboardType="decimal-pad"
               placeholder={prescribedWeight ? String(prescribedWeight) : '—'}
               placeholderTextColor={colors.textSecondary}
@@ -179,26 +110,6 @@ function SetRow({ set, exerciseId, sessionExerciseId, sessionId, ensureStarted, 
           </View>
         </View>
 
-        {/* Actions */}
-        {!isDone && (
-          <View style={styles.setActions}>
-            {saving ? (
-              <ActivityIndicator size="small" color={colors.textAccent} />
-            ) : (
-              <>
-                <TouchableOpacity style={styles.logBtn} onPress={handleLog} disabled={!reps || !isDirty}>
-                  <Text style={[styles.logBtnText, (!reps || !isDirty) && styles.logBtnDisabled]}>Save</Text>
-                </TouchableOpacity>
-                <TouchableOpacity onPress={handleSkip} style={styles.skipBtn}>
-                  <Ionicons name="remove-circle-outline" size={20} color={colors.textSecondary} />
-                </TouchableOpacity>
-                <TouchableOpacity onPress={handleRemove} style={styles.removeSetBtn}>
-                  <Ionicons name="minus-circle" size={20} color={colors.error} />
-                </TouchableOpacity>
-              </>
-            )}
-          </View>
-        )}
       </View>
     </Animated.View>
   );
@@ -206,7 +117,7 @@ function SetRow({ set, exerciseId, sessionExerciseId, sessionId, ensureStarted, 
 
 // ─── Exercise Card ────────────────────────────────────────────────────────────
 
-function ExerciseCard({ exercise, sessionId, ensureStarted, onSetLogged, onSwapPress, onSetError, onRemoveSet }) {
+function ExerciseCard({ exercise, sessionId, ensureStarted, onSetLogged, onSwapPress, onSetError, onRemoveSet, onSetValueChange }) {
   // API contract (from GET /sessions/{id}/detail):
   //   exerciseId         — catalogue reference ID (used in logSet/skipSet payloads)
   //   sessionExerciseId  — this session's exercise row ID (used as React key + state match)
@@ -292,13 +203,10 @@ function ExerciseCard({ exercise, sessionId, ensureStarted, onSetLogged, onSwapP
           set={set}
           exerciseId={exercise.exerciseId}
           sessionExerciseId={exercise.sessionExerciseId}
-          sessionId={sessionId}
-          ensureStarted={ensureStarted}
           prescribedReps={prescribedReps}
           prescribedWeight={lastLoggedWeight ?? exercise.weightKg ?? null}
-          onLogged={(logged) => onSetLogged(exercise.sessionExerciseId, set.setNumber, logged)}
-          onError={onSetError}
           onRemove={() => onRemoveSet?.(exercise.sessionExerciseId, set.setNumber)}
+          onValueChange={(field, value) => onSetValueChange?.(exercise.sessionExerciseId, set.setNumber, field, value)}
         />
       ))}
     </View>
@@ -312,6 +220,9 @@ export default function ActiveSessionScreen({ route, navigation }) {
   const [session, setSession]         = useState(initialSession);
   const [completing, setCompleting]   = useState(false);
   const completingRef = useRef(false);
+  // Tracks user-typed reps/weight per exercise per set — used at Complete Workout time
+  // Shape: { [sessionExerciseId]: { [setNumber]: { reps: string, weight: string } } }
+  const setInputValuesRef = useRef({});
   const [showEndSheet, setShowEndSheet] = useState(false);
 
   const [substituteTarget, setSubstituteTarget] = useState(null);
@@ -515,10 +426,19 @@ export default function ActiveSessionScreen({ route, navigation }) {
       ...prev,
       exercises: prev.exercises.map(ex => {
         if (ex.sessionExerciseId !== sessionExerciseId) return ex;
-        const newLogs = (ex.logs ?? []).filter(l => l.setNumber !== setNumber);
+        const newLogs = (ex.logs ?? [])
+          .filter(l => l.setNumber !== setNumber)
+          .map((l, idx) => ({ ...l, setNumber: idx + 1 }));
         return { ...ex, sets: Math.max(0, (ex.sets ?? 0) - 1), logs: newLogs };
       }),
     }));
+  }, []);
+
+  const handleSetValueChange = useCallback((sessionExerciseId, setNumber, field, value) => {
+    const byEx = setInputValuesRef.current;
+    if (!byEx[sessionExerciseId]) byEx[sessionExerciseId] = {};
+    if (!byEx[sessionExerciseId][setNumber]) byEx[sessionExerciseId][setNumber] = {};
+    byEx[sessionExerciseId][setNumber][field] = value;
   }, []);
 
   // Bug 6: open Add Exercise modal and fetch exercise list
@@ -550,7 +470,7 @@ export default function ActiveSessionScreen({ route, navigation }) {
           name:         ex.name,
           sets:         ex.sets ?? 3,
           reps:         ex.reps ?? 10,
-          weightKg:     ex.weightKg ?? null,
+          weightKg:     ex.weightKg ?? ex.defaultWeightKg ?? ex.weight ?? ex.defaultWeight ?? null,
           logs:         [],
           warmup:       false,
           cooldown:     false,
@@ -591,7 +511,22 @@ export default function ActiveSessionScreen({ route, navigation }) {
       await ensureStarted();
       const { data: completed } = await workoutApi.completeSession(session.sessionId, 'JUST_RIGHT');
       AsyncStorage.removeItem(DRAFT_KEY_PREFIX + session.sessionId).catch(() => {});
-      navigation.replace('WorkoutSummary', { session: completed, sessionData: session });
+      // Synthesize session data with the user's typed values for summary stats
+      const capturedValues = setInputValuesRef.current;
+      const enrichedSession = {
+        ...session,
+        exercises: (session.exercises ?? []).map(ex => ({
+          ...ex,
+          logs: Array.from({ length: ex.sets ?? 0 }, (_, i) => {
+            const setNum = i + 1;
+            const vals = capturedValues[ex.sessionExerciseId]?.[setNum] ?? {};
+            const repsVal = vals.reps != null ? parseInt(vals.reps, 10) : (ex.reps ?? 0);
+            const weightVal = vals.weight != null ? parseFloat(vals.weight) : (ex.weightKg ?? 0);
+            return { setNumber: setNum, status: 'COMPLETED', reps: repsVal, weightKg: weightVal };
+          }),
+        })),
+      };
+      navigation.replace('WorkoutSummary', { session: completed, sessionData: enrichedSession, wasCompleted: true });
     } catch (e) {
       if (__DEV__) console.warn('[ActiveSession] complete failed:', e.response?.status, e.message);
       setInlineError('Could not complete workout. Please try again.');
@@ -715,6 +650,7 @@ export default function ActiveSessionScreen({ route, navigation }) {
               })}
               onSetError={(msg) => setInlineError(msg)}
               onRemoveSet={handleRemoveSet}
+              onSetValueChange={handleSetValueChange}
             />
           ))}
 
@@ -1013,31 +949,6 @@ const styles = StyleSheet.create({
   },
   inputDone: {
     opacity: 0.5,
-  },
-  setActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  logBtn: {
-    backgroundColor: colors.textAccent,
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-  },
-  logBtnText: {
-    color: '#fff',
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  logBtnDisabled: {
-    opacity: 0.4,
-  },
-  skipBtn: {
-    padding: 2,
-  },
-  removeSetBtn: {
-    padding: 2,
   },
   // Inline error
   inlineErrorBanner: {

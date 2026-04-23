@@ -50,7 +50,7 @@ export default function WorkoutSummaryScreen({ route, navigation }) {
   // session: { sessionId, status, actualDurationSeconds }
   // feedback: optional value passed from legacy flow
   // sessionData: local session state — exercises + logs logged client-side
-  const { session, feedback, sessionData } = route.params ?? {};
+  const { session, feedback, sessionData, wasCompleted } = route.params ?? {};
 
   if (!session) {
     return (
@@ -72,19 +72,30 @@ export default function WorkoutSummaryScreen({ route, navigation }) {
 
   const feedbackMeta = feedback ? (FEEDBACK_LABELS[feedback] ?? null) : null;
 
-  // Compute summary stats from client-side sessionData logs
-  const completedLogs = sessionData?.exercises?.flatMap(ex =>
-    (ex.logs ?? []).filter(l => l.status === 'COMPLETED')
-  ) ?? [];
+  // Compute summary stats
+  let totalSets, totalVolume, exercisesCompleted;
 
-  const totalSets = completedLogs.length;
-  const totalVolume = completedLogs.reduce((sum, l) => {
-    return sum + ((l.reps ?? 0) * (l.weightKg ?? 0));
-  }, 0);
-  const exercisesCompleted = sessionData?.exercises?.filter(ex => {
-    const done = (ex.logs ?? []).filter(l => l.status === 'COMPLETED' || l.status === 'SKIPPED').length;
-    return done >= (ex.sets ?? 0);
-  }).length ?? 0;
+  if (wasCompleted) {
+    // Complete Workout path: all exercises and sets are done
+    // Use synthesized logs (with user-typed or prescribed reps/weight)
+    const allLogs = sessionData?.exercises?.flatMap(ex => ex.logs ?? []) ?? [];
+    totalSets = allLogs.length;
+    totalVolume = allLogs.reduce((sum, l) => sum + ((l.reps ?? 0) * (l.weightKg ?? 0)), 0);
+    exercisesCompleted = sessionData?.exercises?.length ?? 0;
+  } else {
+    // Partial save / legacy: count from actual logs
+    const completedLogs = sessionData?.exercises?.flatMap(ex =>
+      (ex.logs ?? []).filter(l => l.status === 'COMPLETED')
+    ) ?? [];
+    totalSets = completedLogs.length;
+    totalVolume = completedLogs.reduce((sum, l) => {
+      return sum + ((l.reps ?? 0) * (l.weightKg ?? 0));
+    }, 0);
+    exercisesCompleted = sessionData?.exercises?.filter(ex => {
+      const done = (ex.logs ?? []).filter(l => l.status === 'COMPLETED' || l.status === 'SKIPPED').length;
+      return done >= (ex.sets ?? 0);
+    }).length ?? 0;
+  }
 
   return (
     <SafeAreaView style={styles.container}>
@@ -146,7 +157,9 @@ export default function WorkoutSummaryScreen({ route, navigation }) {
           <View style={styles.exerciseBreakdown}>
             <Text style={styles.breakdownTitle}>Exercise Summary</Text>
             {sessionData.exercises.map((ex) => {
-              const completedCount = (ex.logs ?? []).filter(l => l.status === 'COMPLETED' || l.status === 'SKIPPED').length;
+              const completedCount = wasCompleted
+                ? (ex.sets ?? 0)
+                : (ex.logs ?? []).filter(l => l.status === 'COMPLETED' || l.status === 'SKIPPED').length;
               return (
                 <View key={ex.sessionExerciseId} style={styles.exRow}>
                   <View style={styles.exLeft}>

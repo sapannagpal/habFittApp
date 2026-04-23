@@ -66,6 +66,12 @@ apiClient.interceptors.response.use(
       return Promise.reject(error);
     }
 
+    // Skip refresh for unauthenticated requests (login, register, etc.)
+    // These 401s are credential errors, not session expiry.
+    if (!originalRequest.headers?.Authorization) {
+      return Promise.reject(error);
+    }
+
     // If already refreshing, queue this request
     if (isRefreshing) {
       return new Promise((resolve, reject) => {
