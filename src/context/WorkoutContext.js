@@ -180,7 +180,7 @@ export function WorkoutProvider({ children }) {
       const plan = transformPlan(apiPlan, preset);
 
       // Fetch current week's sessions
-      const weekRes = await workoutApi.getPlanWeek(plan.id, plan.currentWeek);
+      const weekRes = await workoutApi.getWeeklySchedule(plan.id, plan.currentWeek);
       const sessions = transformWeekSessions(weekRes.data);
 
       dispatch({
@@ -188,6 +188,7 @@ export function WorkoutProvider({ children }) {
         payload: { plan, currentWeekSessions: sessions, today: new Date() },
       });
     } catch (err) {
+      if (__DEV__) console.warn('[WorkoutContext] bootstrapActivePlan failed:', err.message);
       if (err.response?.status === 404) {
         // No active plan — this is a valid state
         dispatch({ type: 'SET_PLAN_LOADING_DONE' });
@@ -239,7 +240,7 @@ export function WorkoutProvider({ children }) {
       const apiPlan = generateRes.data;
       const plan = transformPlan(apiPlan, preset);
 
-      const weekRes = await workoutApi.getPlanWeek(plan.id, plan.currentWeek);
+      const weekRes = await workoutApi.getWeeklySchedule(plan.id, plan.currentWeek);
       const sessions = transformWeekSessions(weekRes.data);
 
       dispatch({
