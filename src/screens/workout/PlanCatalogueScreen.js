@@ -188,7 +188,7 @@ export default function PlanCatalogueScreen({ navigation }) {
       setBootstrapError(null);
       const { data: activePlan } = await workoutApi.getActivePlan();
       if (activePlan?.id) {
-        navigation.replace('PlanDetail', { planId: activePlan.id });
+        navigation.replace('WeeklySchedule', { planId: activePlan.id, plan: activePlan });
         // Don't clear bootstrapping — screen is being replaced
         return;
       }

@@ -132,192 +132,29 @@ describe('ActiveSessionScreen', () => {
     alertSpy.mockRestore();
   });
 
-  // ─── logSet body shape — BUG FIX VALIDATION ────────────────────────────────
+  // ─── Set row rendering (Bug 5 — Save/Skip/Remove buttons removed) ────────────
 
-  describe('logSet — body shape validation (bug fix)', () => {
-    it('calls logSet with (sessionId, {exerciseId, setNumber, reps, weightKg}) — object body, not positional args', async () => {
-      workoutApi.logSet.mockResolvedValueOnce({
-        data: { setNumber: 1, reps: 10, weightKg: 60, status: 'COMPLETED' },
-      });
+  describe('set row rendering', () => {
+    it('does NOT render a Save button in any set row', () => {
+      const { queryAllByText } = renderScreen();
+      // Bug 5: Save button removed from SetRow — should never appear
+      expect(queryAllByText('Save').length).toBe(0);
+    });
 
-      const { getAllByPlaceholderText, getAllByText } = renderScreen();
+    it('renders reps and weight inputs for each pending set', () => {
+      const { getAllByPlaceholderText } = renderScreen();
+      // 3 sets × reps placeholder "10"
+      expect(getAllByPlaceholderText('10').length).toBe(3);
+      // 3 sets × weight placeholder "60"
+      expect(getAllByPlaceholderText('60').length).toBe(3);
+    });
 
-      // Fill in reps field (placeholder = prescribed reps "10")
-      const repsInputs = getAllByPlaceholderText('10');
-      fireEvent.changeText(repsInputs[0], '10');
-
-      // Fill in weight field (placeholder = prescribed weight "60")
+    it('weight input is editable for pending sets', () => {
+      const { getAllByPlaceholderText } = renderScreen();
       const weightInputs = getAllByPlaceholderText('60');
-      fireEvent.changeText(weightInputs[0], '55');
-
-      // Tap "Save" button
-      const logButtons = getAllByText('Save');
-      fireEvent.press(logButtons[0]);
-
-      await waitFor(() => {
-        expect(workoutApi.logSet).toHaveBeenCalledTimes(1);
-
-        const [firstArg, secondArg] = workoutApi.logSet.mock.calls[0];
-
-        // First arg: sessionId string
-        expect(firstArg).toBe('sess-001');
-
-        // Second arg MUST be an object — not a separate positional argument
-        expect(typeof secondArg).toBe('object');
-        expect(secondArg).not.toBeNull();
-
-        // Body fields must use the correct names
-        expect(secondArg).toEqual({
-          exerciseId: 'ex-abc',   // catalogue exercise reference ID
-          setNumber:  1,
-          reps:       10,
-          weightKg:   55,
-        });
-
-        // Verify there is NO third positional argument (the old broken signature had 5 args)
-        expect(workoutApi.logSet.mock.calls[0].length).toBe(2);
-      });
-    });
-
-    it('sends weightKg: null when the weight field is left empty', async () => {
-      workoutApi.logSet.mockResolvedValueOnce({
-        data: { setNumber: 1, reps: 8, weightKg: null, status: 'COMPLETED' },
-      });
-
-      // Render with weightKg: null at the exercise level so pre-fill is also null.
-      // This ensures the weight field starts empty (no pre-fill from prescribedWeight).
-      const { getAllByPlaceholderText, getAllByText } = renderScreen({
-        exercises: [
-          {
-            sessionExerciseId: 'sex-001',
-            exerciseId:        'ex-abc',
-            name:              'Bench Press',
-            sets:              3,
-            reps:              10,
-            weightKg:          null,   // no prescribed weight → pre-fill is empty string
-            restSeconds:       90,
-            warmup:            false,
-            cooldown:          false,
-            exerciseOrder:     1,
-            logs:              [],
-          },
-        ],
-      });
-
-      // Fill reps; weight field has no pre-fill (prescribedWeight is null),
-      // so its value is already '' — leave it untouched.
-      const repsInputs = getAllByPlaceholderText('10');
-      fireEvent.changeText(repsInputs[0], '8');
-
-      fireEvent.press(getAllByText('Save')[0]);
-
-      await waitFor(() => {
-        const [, body] = workoutApi.logSet.mock.calls[0];
-        expect(body.weightKg).toBeNull();
-      });
-    });
-
-    it('sends reps as a parsed integer — not a string', async () => {
-      workoutApi.logSet.mockResolvedValueOnce({
-        data: { setNumber: 1, reps: 12, weightKg: null, status: 'COMPLETED' },
-      });
-
-      const { getAllByPlaceholderText, getAllByText } = renderScreen();
-
-      const repsInputs = getAllByPlaceholderText('10');
-      fireEvent.changeText(repsInputs[0], '12'); // string from TextInput
-
-      fireEvent.press(getAllByText('Save')[0]);
-
-      await waitFor(() => {
-        const [, body] = workoutApi.logSet.mock.calls[0];
-        expect(typeof body.reps).toBe('number');
-        expect(body.reps).toBe(12);
-      });
-    });
-  });
-
-  // ─── skipSet body shape — BUG FIX VALIDATION ──────────────────────────────
-
-  describe('skipSet — body shape validation (bug fix)', () => {
-    it('calls skipSet with (sessionId, {exerciseId, setNumber}) — object body, not positional args', async () => {
-      workoutApi.skipSet.mockResolvedValueOnce({
-        data: { setNumber: 1, status: 'SKIPPED' },
-      });
-
-      // Render a session with exactly 1 set so the button count is predictable.
-      const singleSetSession = makeSession({
-        exercises: [
-          {
-            sessionExerciseId: 'sex-001',
-            exerciseId:        'ex-abc',
-            name:              'Bench Press',
-            sets:              1,   // ← only 1 set
-            reps:              10,
-            weightKg:          60,
-            restSeconds:       90,
-            warmup:            false,
-            cooldown:          false,
-            exerciseOrder:     1,
-            logs:              [],
-          },
-        ],
-      });
-
-      const { UNSAFE_getAllByType, getAllByText } = render(
-        <ActiveSessionScreen
-          navigation={{ replace: mockReplace, navigate: mockNavigate, goBack: mockGoBack, addListener: mockAddListener }}
-          route={{ params: { session: singleSetSession, hasStarted: true } }}
-        />,
-      );
-
-      // With 1 pending set the rendered TouchableOpacity order is:
-      //   [0] Back button (top-left header chevron)
-      //   [1] End Workout button (top-right header)
-      //   [2] Log button  (inside SetRow actions)
-      //   [3] Skip button (inside SetRow actions — no text child, contains null Ionicons)
-      //   [4] Complete Workout CTA (bottom)
-      // We find the Skip button as the one immediately after the Log button that has no text.
-      const { TouchableOpacity } = require('react-native');
-      const allTouchables = UNSAFE_getAllByType(TouchableOpacity);
-
-      // Find Log button index — the first one with a Text child reading "Log"
-      const logBtnIndex = allTouchables.findIndex((btn) => {
-        const children = btn.props.children;
-        // logBtn has a single Text child with "Log"
-        if (!children) return false;
-        const arr = Array.isArray(children) ? children : [children];
-        return arr.some(
-          (c) => c && c.props && (c.props.children === 'Save' || c.props.children?.[0] === 'Save'),
-        );
-      });
-
-      // Skip button is immediately after the Log button
-      expect(logBtnIndex).toBeGreaterThanOrEqual(0);
-      const skipButton = allTouchables[logBtnIndex + 1];
-      expect(skipButton).toBeTruthy();
-
-      fireEvent.press(skipButton);
-
-      await waitFor(() => {
-        expect(workoutApi.skipSet).toHaveBeenCalledTimes(1);
-
-        const [firstArg, secondArg] = workoutApi.skipSet.mock.calls[0];
-
-        // First arg: sessionId string
-        expect(firstArg).toBe('sess-001');
-
-        // Second arg MUST be an object — not a separate positional argument
-        expect(typeof secondArg).toBe('object');
-        expect(secondArg).not.toBeNull();
-
-        expect(secondArg).toEqual({
-          exerciseId: 'ex-abc',
-          setNumber:  1,
-        });
-
-        // Must NOT have a third positional arg (the old broken call had 3 positional args)
-        expect(workoutApi.skipSet.mock.calls[0].length).toBe(2);
+      // All pending sets should have editable weight inputs
+      weightInputs.forEach((input) => {
+        expect(input.props.editable).not.toBe(false);
       });
     });
   });
@@ -325,43 +162,39 @@ describe('ActiveSessionScreen', () => {
   // ─── Set state after logging ────────────────────────────────────────────────
 
   describe('set state after logging', () => {
-    it('marks the set row as done after a successful log', async () => {
-      const loggedSet = { setNumber: 1, reps: 10, weightKg: 60, status: 'COMPLETED' };
-      workoutApi.logSet.mockResolvedValueOnce({ data: loggedSet });
-
-      const { getAllByPlaceholderText, getAllByText, queryAllByText } = renderScreen();
-
-      const repsInputs = getAllByPlaceholderText('10');
-      fireEvent.changeText(repsInputs[0], '10');
-
-      fireEvent.press(getAllByText('Save')[0]);
-
-      await waitFor(() => {
-        // After logging, the "Save" button for set 1 should disappear (isDone = true)
-        // The number of Save buttons should decrease from 3 to 2
-        const remainingLogButtons = queryAllByText('Save');
-        expect(remainingLogButtons.length).toBeLessThan(3);
-      });
-    });
-
-    it('does NOT mark the set done when logSet fails (silent fail — no alert)', async () => {
-      workoutApi.logSet.mockRejectedValueOnce(new Error('Server Error'));
-
-      const { getAllByPlaceholderText, getAllByText } = renderScreen();
-
-      const repsInputs = getAllByPlaceholderText('10');
-      fireEvent.changeText(repsInputs[0], '10');
-
-      fireEvent.press(getAllByText('Save')[0]);
-
-      await waitFor(() => {
-        expect(workoutApi.logSet).toHaveBeenCalled();
+    it('set rows for pre-logged COMPLETED sets render as done (inputs not editable)', () => {
+      const session = makeSession({
+        exercises: [
+          {
+            sessionExerciseId: 'sex-001',
+            exerciseId:        'ex-abc',
+            name:              'Bench Press',
+            sets:              3,
+            reps:              10,
+            weightKg:          60,
+            restSeconds:       90,
+            warmup:            false,
+            cooldown:          false,
+            exerciseOrder:     1,
+            logs: [
+              { setNumber: 1, reps: 10, weightKg: 60, status: 'COMPLETED' },
+            ],
+          },
+        ],
       });
 
-      // All 3 Save buttons should still be present (set was not marked done)
-      expect(getAllByText('Save').length).toBe(3);
-      // And no alert was shown — actions must execute silently on failure
-      expect(alertSpy).not.toHaveBeenCalled();
+      const { getAllByPlaceholderText } = render(
+        <ActiveSessionScreen
+          navigation={{ replace: mockReplace, navigate: mockNavigate, goBack: mockGoBack, addListener: mockAddListener }}
+          route={{ params: { session, hasStarted: true } }}
+        />,
+      );
+
+      // Set 1 is COMPLETED → inputs not editable. Sets 2 & 3 are pending → editable.
+      const repsInputs = getAllByPlaceholderText('10');
+      // At least 2 pending sets should exist and be editable
+      const editableInputs = repsInputs.filter(i => i.props.editable !== false);
+      expect(editableInputs.length).toBeGreaterThanOrEqual(2);
     });
   });
 
@@ -495,26 +328,24 @@ describe('ActiveSessionScreen', () => {
       expect(workoutApi.startSession).not.toHaveBeenCalled();
     });
 
-    it('calls startSession exactly once before the first logSet (lazy-start)', async () => {
+    it('calls startSession exactly once before completeSession (lazy-start via Complete Workout)', async () => {
       workoutApi.startSession.mockResolvedValue({ data: { sessionId: 'sess-001' } });
-      workoutApi.logSet.mockResolvedValue({ data: { setNumber: 1, status: 'COMPLETED' } });
+      workoutApi.completeSession.mockResolvedValue({ data: { sessionId: 'sess-001', status: 'COMPLETED', actualDurationSeconds: 0 } });
 
-      const { getAllByPlaceholderText, getAllByText } = renderScreen({}, { hasStarted: false });
+      const { getByText } = renderScreen({}, { hasStarted: false });
 
-      const repsInputs = getAllByPlaceholderText('10');
-      fireEvent.changeText(repsInputs[0], '10');
-      fireEvent.press(getAllByText('Save')[0]);
+      fireEvent.press(getByText('Complete Workout'));
 
       await waitFor(() => {
         expect(workoutApi.startSession).toHaveBeenCalledTimes(1);
         expect(workoutApi.startSession).toHaveBeenCalledWith('sess-001');
-        expect(workoutApi.logSet).toHaveBeenCalled();
+        expect(workoutApi.completeSession).toHaveBeenCalled();
       });
 
-      // Start order: start BEFORE log
-      const startOrder = workoutApi.startSession.mock.invocationCallOrder[0];
-      const logOrder   = workoutApi.logSet.mock.invocationCallOrder[0];
-      expect(startOrder).toBeLessThan(logOrder);
+      // Start order: start BEFORE complete
+      const startOrder    = workoutApi.startSession.mock.invocationCallOrder[0];
+      const completeOrder = workoutApi.completeSession.mock.invocationCallOrder[0];
+      expect(startOrder).toBeLessThan(completeOrder);
     });
 
     it('end workout without starting just goes back — no API call', async () => {

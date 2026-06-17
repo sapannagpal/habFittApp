@@ -115,8 +115,9 @@ describe('PlanCatalogueScreen', () => {
       renderScreen();
 
       await waitFor(() => {
-        expect(mockReplace).toHaveBeenCalledWith('PlanDetail', {
-          planId: expect.any(String),
+        expect(mockReplace).toHaveBeenCalledWith('WeeklySchedule', {
+          planId: 'plan-1',
+          plan: activePlan,
         });
       });
     });

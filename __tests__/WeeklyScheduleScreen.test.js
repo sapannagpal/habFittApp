@@ -315,15 +315,15 @@ describe('WeeklyScheduleScreen', () => {
   // ─── Week date range display ────────────────────────────────────────────────
 
   describe('week date range display', () => {
-    it('shows "Apr 14 – Apr 20" for week 1 when plan createdAt is 2026-04-14', async () => {
+    it('shows "Apr 14 – Apr 19" for week 1 when plan createdAt is 2026-04-14 (Tuesday)', async () => {
       workoutApi.getWeeklySchedule.mockResolvedValueOnce({ data: makeScheduleDays() });
 
       const { findByText } = renderScreen({ createdAt: '2026-04-14T00:00:00.000Z', currentWeek: 1 });
 
-      await findByText('Apr 14 – Apr 20');
+      await findByText('Apr 14 – Apr 19');
     });
 
-    it('shows "Apr 21 – Apr 27" for week 2', async () => {
+    it('shows "Apr 20 – Apr 26" for week 2 when plan started on a Tuesday', async () => {
       workoutApi.getWeeklySchedule.mockResolvedValue({ data: makeScheduleDays() });
 
       const plan = { ...DEFAULT_PLAN, createdAt: '2026-04-14T00:00:00.000Z', currentWeek: 2 };
@@ -334,7 +334,7 @@ describe('WeeklyScheduleScreen', () => {
         />,
       );
 
-      await findByText('Apr 21 – Apr 27');
+      await findByText('Apr 20 – Apr 26');
     });
 
     it('falls back to "Week 1" when plan.createdAt is missing', async () => {
